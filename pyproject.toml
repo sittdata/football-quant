@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fbpredict"
+version = "0.1.0"
+description = "Football prediction research pipeline for opening AH / O-U / price-pool rules"
+requires-python = ">=3.10"
+
+[tool.setuptools]
+packages = ["fbpredict", "fbpredict.providers"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    # The report's feature-coverage table says the same thing, more usefully.
+    "ignore:Skipping features without any observed values:UserWarning",
+]

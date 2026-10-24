@@ -1,0 +1,34 @@
+# secrets
+.env
+.env.local
+
+# data
+data/
+dsa_project/data/
+
+# models (keep production multileague_v2 and its sidecar)
+models/*
+!models/multileague_v2.pkl
+!models/multileague_v2.meta.json
+models/backups/
+
+# reports and logs
+reports/
+logs/
+*.log
+
+# large files
+*.pdf
+DSA.pdf
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+.vscode/
+.agents/
