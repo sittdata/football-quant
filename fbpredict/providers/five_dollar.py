@@ -284,7 +284,9 @@ def to_match_row(
     if not home or not away or fixture.get("id") is None:
         return None
 
-    goals = fixture.get("goals") or {}
+    status = str(fixture.get("status") or "").lower().strip()
+    is_finished = status in ("finished", "ft", "aet", "pen")
+    goals = fixture.get("goals") or {} if is_finished else {}
     row: dict[str, Any] = {
         "match_id": f"5dfa:{fixture.get('id')}",
         "provider": "5dollarfootballapi",
@@ -293,10 +295,10 @@ def to_match_row(
         "kickoff_at": fixture.get("kickoff_utc"),
         "home_team": home,
         "away_team": away,
-        "home_goals": _int(goals.get("home")),
-        "away_goals": _int(goals.get("away")),
-        "ht_home": _int(goals.get("half_home")),
-        "ht_away": _int(goals.get("half_away")),
+        "home_goals": _int(goals.get("home")) if is_finished else None,
+        "away_goals": _int(goals.get("away")) if is_finished else None,
+        "ht_home": _int(goals.get("half_home")) if is_finished else None,
+        "ht_away": _int(goals.get("half_away")) if is_finished else None,
         "odds_source": f"5dollarfootballapi/{bookmaker}",
         "result_source": "5dollarfootballapi",
         "odds_fetched_at": fetched_at,

@@ -20,6 +20,8 @@ logs/
 # large files
 *.pdf
 DSA.pdf
+screen.png
+*.png
 
 # python
 __pycache__/

@@ -29,7 +29,7 @@ unit  meaning
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 
@@ -228,6 +228,44 @@ def fair_two_way(odds_a: float, odds_b: float) -> tuple[float, float]:
     return float(fair_a[0]), float(fair_b[0])
 
 
+def fair_two_way_shin(odds_a: float, odds_b: float, tol: float = 1e-7, max_iter: int = 100) -> tuple[float, float, float]:
+    """Remove overround using Shin's method (accounting for insider trading / favorite-longshot bias).
+
+    Returns ``(p_a, p_b, z)`` where p_a + p_b == 1.0 and z is the estimated insider proportion.
+    """
+    _safe_inverse(odds_a)
+    _safe_inverse(odds_b)
+    q_a = 1.0 / float(odds_a)
+    q_b = 1.0 / float(odds_b)
+    q_sum = q_a + q_b
+
+    z_low = 0.0
+    z_high = 0.4
+    z_mid = 0.0
+    p_a = q_a / q_sum
+    p_b = q_b / q_sum
+
+    for _ in range(max_iter):
+        z_mid = (z_low + z_high) / 2.0
+        term_a = math.sqrt(z_mid**2 + 4.0 * (1.0 - z_mid) * (q_a**2) / q_sum)
+        term_b = math.sqrt(z_mid**2 + 4.0 * (1.0 - z_mid) * (q_b**2) / q_sum)
+        denom = 2.0 * (1.0 - z_mid)
+        if denom == 0:
+            break
+        p_a = (term_a - z_mid) / denom
+        p_b = (term_b - z_mid) / denom
+        sum_p = p_a + p_b
+        if abs(sum_p - 1.0) < tol:
+            break
+        if sum_p > 1.0:
+            z_low = z_mid
+        else:
+            z_high = z_mid
+
+    s = p_a + p_b
+    return float(p_a / s), float(p_b / s), float(z_mid)
+
+
 def fair_three_way(odds_home: float, odds_draw: float, odds_away: float) -> tuple[float, float, float]:
     """Remove the overround from a 1X2 market. Delegates to the array version."""
     _safe_inverse(odds_home)
@@ -278,3 +316,57 @@ def settle_pick(
         raise ValueError(f"unknown market {market!r}")
 
     return unit, unit_to_profit(unit, odds, stake)
+
+
+# --------------------------------------------------------------------------- #
+# outcome labeling & 5-tier settlement summary
+# --------------------------------------------------------------------------- #
+def outcome_name(unit: float) -> str:
+    """Return descriptive name for the 5 quarter-line outcomes."""
+    if math.isclose(unit, 1.0, abs_tol=1e-5):
+        return "ชนะเต็ม (+1.0)"
+    if math.isclose(unit, 0.5, abs_tol=1e-5):
+        return "ชนะครึ่ง (+0.5)"
+    if math.isclose(unit, 0.0, abs_tol=1e-5):
+        return "เสมอยก (0.0)"
+    if math.isclose(unit, -0.5, abs_tol=1e-5):
+        return "เสียครึ่ง (-0.5)"
+    if math.isclose(unit, -1.0, abs_tol=1e-5):
+        return "เสียเต็ม (-1.0)"
+    return f"อื่นๆ ({unit:+.2f})"
+
+
+def summarize_outcomes(
+    units: object, profits: object | None = None
+) -> dict[str, Any]:
+    """Calculate 5-tier settlement breakdown, win rates, and net financial P&L."""
+    u = np.asarray(units, dtype="float64")
+    full_wins = int(np.sum(np.isclose(u, 1.0, atol=1e-5)))
+    half_wins = int(np.sum(np.isclose(u, 0.5, atol=1e-5)))
+    pushes = int(np.sum(np.isclose(u, 0.0, atol=1e-5)))
+    half_losses = int(np.sum(np.isclose(u, -0.5, atol=1e-5)))
+    full_losses = int(np.sum(np.isclose(u, -1.0, atol=1e-5)))
+    total = len(u)
+    decided = full_wins + half_wins + half_losses + full_losses
+
+    nominal_win_rate = (full_wins + half_wins) / decided if decided > 0 else 0.0
+    effective_win_rate = (full_wins + 0.5 * half_wins) / decided if decided > 0 else 0.0
+
+    p = np.asarray(profits, dtype="float64") if profits is not None else u
+    total_profit = float(np.sum(p))
+    roi = (total_profit / total) * 100.0 if total > 0 else 0.0
+
+    return {
+        "total": total,
+        "full_wins": full_wins,
+        "half_wins": half_wins,
+        "pushes": pushes,
+        "half_losses": half_losses,
+        "full_losses": full_losses,
+        "decided": decided,
+        "nominal_win_rate": nominal_win_rate,
+        "effective_win_rate": effective_win_rate,
+        "total_profit": total_profit,
+        "roi": roi,
+    }
+

@@ -224,12 +224,84 @@ def fetch_company_odds(company_id: int = 31) -> dict[str, dict[str, float]]:
         return {}
 
 
+def fetch_run_odds(company_id: int = 8) -> dict[str, dict[str, float]]:
+    """Fetch live streaming odds from ch_runOddsData_{company_id}.txt."""
+    url = f"{BASE_URL}/gf/data/odds/en/ch_runOddsData_{company_id}.txt"
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=8)
+        if resp.status_code != 200 or not resp.text:
+            return {}
+        res = {}
+        for entry in resp.text.split("$"):
+            if not entry.strip():
+                continue
+            parts = entry.split("!")
+            mid = parts[0].strip()
+
+            def safe_float(v):
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    return None
+
+            ah_h, ah_l, ah_a = None, None, None
+            if len(parts) > 1 and parts[1].strip():
+                ah_items = parts[1].split(",")
+                if len(ah_items) >= 3:
+                    ah_h = safe_float(ah_items[0])
+                    ah_l = safe_float(ah_items[1])
+                    ah_a = safe_float(ah_items[2])
+
+            p_h, p_d, p_a = None, None, None
+            if len(parts) > 2 and parts[2].strip():
+                p_items = parts[2].split(",")
+                if len(p_items) >= 3:
+                    p_h = safe_float(p_items[0])
+                    p_d = safe_float(p_items[1])
+                    p_a = safe_float(p_items[2])
+
+            ou_o, ou_l, ou_u = None, None, None
+            if len(parts) > 3 and parts[3].strip():
+                ou_items = parts[3].split(",")
+                if len(ou_items) >= 3:
+                    ou_o = safe_float(ou_items[0])
+                    ou_l = safe_float(ou_items[1])
+                    ou_u = safe_float(ou_items[2])
+
+            if ah_l is not None or ou_l is not None:
+                res[mid] = {
+                    "ah_line": ah_l,
+                    "ah_home_price": ah_h,
+                    "ah_away_price": ah_a,
+                    "ou_line": ou_l,
+                    "ou_over_price": ou_o,
+                    "ou_under_price": ou_u,
+                    "pool_home": p_h,
+                    "pool_draw": p_d,
+                    "pool_away": p_a,
+                }
+        return res
+    except Exception:
+        return {}
+
+
 def get_thscore_live_data(company_id: int = 31) -> list[ThscoreLiveMatch]:
     """Combine match feed with live multi-bookmaker odds (SBOBET, Bet365, Crown)."""
     _, raw_matches = fetch_matches_feed()
     sbo_odds = fetch_company_odds(company_id=31)
+    for mid, o in fetch_run_odds(company_id=31).items():
+        if mid not in sbo_odds:
+            sbo_odds[mid] = o
+
     b365_odds = fetch_company_odds(company_id=8)
+    for mid, o in fetch_run_odds(company_id=8).items():
+        if mid not in b365_odds:
+            b365_odds[mid] = o
+
     crown_odds = fetch_company_odds(company_id=3)
+    for mid, o in fetch_run_odds(company_id=3).items():
+        if mid not in crown_odds:
+            crown_odds[mid] = o
 
     results = []
     for m in raw_matches:

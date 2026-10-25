@@ -174,3 +174,120 @@ def load_config() -> Config:
     cfg = Config.from_env()
     cfg.ensure_dirs()
     return cfg
+
+
+# =========================================================================== #
+# League Whitelist & Safety Firewall (Anti-Garbage Filter)
+# =========================================================================== #
+TOP_TIER_LEAGUES: tuple[str, ...] = (
+    "England Premier League",
+    "Premier League",
+    "พรีเมียร์ลีก อังกฤษ",
+    "English League Championship",
+    "England Championship",
+    "Championship",
+    "อีเอฟแอลแชมเปียนชิป",
+    "แชมเปี้ยนชิพ อังกฤษ",
+    "แชมเปี้ยนชิพ",
+    "Spain La Liga",
+    "La Liga",
+    "สเปน ลาลีกา",
+    "ลาลีกา",
+    "Italy Serie A",
+    "Serie A",
+    "เซเรียอา",
+    "อิตาลี เซเรีย อา",
+    "Italy Serie B",
+    "Serie B",
+    "เซเรีย บี",
+    "Germany Bundesliga",
+    "Germany Bundesliga I",
+    "Bundesliga",
+    "Bundesliga I",
+    "บุนเดสลีกา",
+    "เยอรมัน บุนเดสลีกา",
+    "Germany 2. Bundesliga",
+    "2. Bundesliga",
+    "2. บุนเดสลีกา",
+    "France Ligue 1",
+    "Ligue 1",
+    "ลีกเอิง",
+    "ลีกเอิง ฝรั่งเศส",
+    "Netherlands Eredivisie",
+    "Eredivisie",
+    "เอเรดิวิซี",
+    "Portugal Primeira Liga",
+    "Primeira Liga",
+    "ปรีไมราลีกา",
+    "Belgium Pro League",
+    "Pro League",
+    "เบลเยียม โปรลีก",
+    "Spain Segunda Division",
+    "Segunda Division",
+    "สเปน เซกุนด้า",
+    "UEFA Champions League",
+    "Champions League",
+    "ยูฟ่าแชมเปียนส์ลีก",
+    "UEFA Europa League",
+    "Europa League",
+    "ยูฟ่ายูโรปาลีก",
+)
+
+DISALLOWED_KEYWORDS: tuple[str, ...] = (
+    "(ญ)",
+    "หญิง",
+    "women",
+    "wom",
+    "fem",
+    "u17",
+    "u18",
+    "u19",
+    "u20",
+    "u21",
+    "u23",
+    "เยาวชน",
+    "youth",
+    "สำรอง",
+    "reserves",
+    "res.",
+    "ทีมบี",
+    " team b",
+    " b team",
+    " (b)",
+    " ii",
+    "ดิวิชั่น 3",
+    "ดิวิชั่น 4",
+    "division 3",
+    "division 4",
+    "amateur",
+    "สมัครเล่น",
+)
+
+
+def is_whitelisted_league(league_name: str | None) -> bool:
+    """True if league is an approved high-liquidity top-tier competition."""
+    if not league_name:
+        return False
+    clean = str(league_name).strip()
+    lower = clean.lower()
+    for kw in DISALLOWED_KEYWORDS:
+        if kw in lower:
+            return False
+    if lower == "พรีเมียร์ลีก":
+        return True
+    for target in TOP_TIER_LEAGUES:
+        t_low = target.lower()
+        if t_low in lower or (len(lower) >= 6 and lower in t_low):
+            return True
+    return False
+
+
+def is_safe_match(home_team: str, away_team: str, league_name: str | None) -> bool:
+    """True only if league is whitelisted AND both teams are senior men's squads."""
+    if not is_whitelisted_league(league_name):
+        return False
+    combined = f"{home_team} {away_team}".lower()
+    for kw in DISALLOWED_KEYWORDS:
+        if kw in combined:
+            return False
+    return True

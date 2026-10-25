@@ -189,3 +189,17 @@ def test_scalar_fair_two_way_still_rejects_bad_odds() -> None:
         labels.fair_two_way(1.0, 1.9)
     with pytest.raises(ValueError):
         labels.overround(1.9, 0.5)
+
+
+def test_fair_two_way_shin() -> None:
+    p_a, p_b, z = labels.fair_two_way_shin(1.90, 1.90)
+    assert math.isclose(p_a, 0.5, abs_tol=1e-5)
+    assert math.isclose(p_b, 0.5, abs_tol=1e-5)
+    assert math.isclose(p_a + p_b, 1.0, abs_tol=1e-7)
+
+    # Asymmetric odds: 1.50 vs 2.60
+    p_fav, p_dog, z_val = labels.fair_two_way_shin(1.50, 2.60)
+    assert p_fav > p_dog
+    assert math.isclose(p_fav + p_dog, 1.0, abs_tol=1e-7)
+    assert z_val >= 0.0
+

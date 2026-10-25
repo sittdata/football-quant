@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cook45 Quant Terminal | Quantitative Football Hedge Fund Dashboard</title>
+  <meta name="description" content="Institutional Quantitative Football Investment Dashboard. Powered by strict Walk-Forward Calibrated Machine Learning Models and Fractional Kelly Staking.">
+  
+  <!-- Modern Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Chart.js for smooth interactive equity curves -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <div class="app-container">
+    
+    <!-- Top Header Bar -->
+    <header class="app-header">
+      <div class="brand-section">
+        <div class="brand-logo">CK</div>
+        <div class="brand-title">
+          <h1>COOK45 QUANTITATIVE CAPITAL</h1>
+          <div class="brand-subtitle">
+            <span class="live-indicator"></span>
+            <span>MODEL CALIBRATED V1 (6,098 MATCHES)</span>
+            <span>•</span>
+            <span id="headerTimestamp">LIVE AUDIT LEDGER</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <button id="btnScan" class="btn btn-primary" onclick="triggerScan()">
+          <span>🔎</span> Scan Fixtures
+        </button>
+        <button id="btnSettle" class="btn btn-secondary" onclick="triggerSettle()">
+          <span>⚡</span> Auto-Settle
+        </button>
+        <button id="btnRefresh" class="btn btn-secondary" onclick="initDashboard()">
+          <span>🔄</span> Refresh
+        </button>
+
+      </div>
+    </header>
+
+    <!-- Top KPI Performance Cards -->
+    <section class="kpi-grid">
+      
+      <div class="glass-panel kpi-card">
+        <div class="kpi-label">Cumulative Net P&L</div>
+        <div class="kpi-value" id="kpiPnl">+0.00 <span class="kpi-unit">Units</span></div>
+        <div class="kpi-trend text-emerald" id="kpiPnlTrend">▲ 100% Risk-Free Simulation</div>
+      </div>
+
+      <div class="glass-panel kpi-card">
+        <div class="kpi-label">Decisive Win Rate</div>
+        <div class="kpi-value text-emerald" id="kpiWinRate">0.0<span class="kpi-unit">%</span></div>
+        <div class="kpi-trend" id="kpiRecord">0W - 0D - 0L</div>
+      </div>
+
+      <div class="glass-panel kpi-card">
+        <div class="kpi-label">Realized Net ROI</div>
+        <div class="kpi-value text-gold" id="kpiRoi">+0.0<span class="kpi-unit">%</span></div>
+        <div class="kpi-trend text-gold" id="kpiProfitFactor">Profit Factor: 0.00</div>
+      </div>
+
+      <div class="glass-panel kpi-card">
+        <div class="kpi-label">Max Drawdown</div>
+        <div class="kpi-value text-rose" id="kpiMaxDd">0.00 <span class="kpi-unit">Units</span></div>
+        <div class="kpi-trend" id="kpiSharpe">Sharpe: 0.00 | Sortino: 0.00</div>
+      </div>
+
+      <div class="glass-panel kpi-card">
+        <div class="kpi-label">Active Portfolio Volume</div>
+        <div class="kpi-value text-cyan" id="kpiTotalBets">0 <span class="kpi-unit">Bets</span></div>
+        <div class="kpi-trend" id="kpiOpenCount">0 Open | 0 Settled</div>
+      </div>
+
+      <div class="glass-panel kpi-card">
+        <div class="kpi-label">Money Management</div>
+        <div class="kpi-value" style="color: var(--accent-indigo)">1/4 Kelly</div>
+        <div class="kpi-trend" style="color: var(--accent-indigo)">Dynamic Risk Clamp (0.5 - 2.5U)</div>
+      </div>
+
+    </section>
+
+    <!-- Main Grid: Chart & Live Opportunities -->
+    <div class="dashboard-grid">
+      
+      <!-- Left: Interactive Bankroll Chart -->
+      <section class="glass-panel chart-card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>📈</span> Bankroll Equity Trajectory (Out-of-Sample)
+          </div>
+          <div style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">
+            WALK-FORWARD VALIDATED
+          </div>
+        </div>
+        <div class="chart-wrapper">
+          <canvas id="equityChart"></canvas>
+        </div>
+      </section>
+
+      <!-- Right: Model High-Alpha Opportunities -->
+      <section class="glass-panel scanner-card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>🎯</span> Recommended Alpha Fixtures
+          </div>
+          <span class="badge badge-open" id="openPicksCount">0 PICKS</span>
+        </div>
+        <div class="recommendations-list" id="recommendationsList">
+          <div style="text-align: center; color: var(--text-muted); padding: 40px 0;">
+            Loading qualified quant opportunities...
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- Bottom: Full Audit Ledger Table -->
+    <section class="glass-panel ledger-section">
+      <div class="card-header">
+        <div class="card-title">
+          <span>📑</span> Institutional Paper Trading Ledger
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 11px;" onclick="filterLedger('ALL')">ALL</button>
+          <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 11px;" onclick="filterLedger('OPEN')">OPEN</button>
+          <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 11px;" onclick="filterLedger('SETTLED')">SETTLED</button>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="ledger-table" id="ledgerTable">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Kickoff (UTC)</th>
+              <th>League</th>
+              <th>Fixture</th>
+              <th>Market</th>
+              <th>Recommended Pick</th>
+              <th>Odds</th>
+              <th>Win Prob</th>
+              <th>Edge</th>
+              <th>Stake</th>
+              <th>Score</th>
+              <th>Status</th>
+              <th>Net P&L</th>
+            </tr>
+          </thead>
+          <tbody id="ledgerTableBody">
+            <tr>
+              <td colspan="13" style="text-align: center; color: var(--text-muted); padding: 30px;">
+                Loading ledger records...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
