@@ -82,3 +82,43 @@ def test_monte_carlo_lineup_shift_bounds():
     assert 0.0 <= post["away_win_prob"] <= 1.0
     total_p = post["home_win_prob"] + post["draw_prob"] + post["away_win_prob"]
     assert pytest.approx(total_p, abs=1e-3) == 1.0
+
+
+def test_dynamic_lineup_with_database_form():
+    """Verify lineup engine dynamically adjusts lambda penalties using DB player stats."""
+    import sqlite3
+    from fbpredict.db import init_db
+
+    con = init_db(":memory:")
+    cur = con.cursor()
+
+    # Case 1: In-form Saka (scored 4 goals, high xG, started all 5)
+    for i in range(1, 6):
+        cur.execute("""
+            INSERT INTO player_match_stats (
+                player_name, team, match_date, position, minutes, is_starter, goals, xg, xa, key_passes, rating
+            ) VALUES ('Bukayo Saka', 'Arsenal', ?, 'FW', 90, 1, 1, 0.85, 0.40, 3, 8.4)
+        """, (f"2026-10-0{i}",))
+
+    # Static vs Dynamic comparison
+    _, _, static_intel = calculate_lineup_lambdas(
+        base_lambda_home=1.80,
+        base_lambda_away=1.00,
+        home_absences=["Bukayo Saka"],
+        away_absences=[],
+    )
+
+    _, _, dynamic_intel = calculate_lineup_lambdas(
+        base_lambda_home=1.80,
+        base_lambda_away=1.00,
+        home_absences=["Bukayo Saka"],
+        away_absences=[],
+        home_team="Arsenal",
+        match_date="2026-10-25",
+        con=con,
+    )
+
+    # In-form Saka missing should inflict equal or greater drop in home lambda than static default
+    assert dynamic_intel["adj_lambda_home"] <= static_intel["adj_lambda_home"]
+    assert dynamic_intel["home_absences"][0]["form"]["starter_shock"] == 1.0
+

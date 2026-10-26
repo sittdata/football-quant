@@ -96,8 +96,14 @@ def calculate_lineup_lambdas(
     base_lambda_away: float,
     home_absences: List[str | Dict[str, Any]],
     away_absences: List[str | Dict[str, Any]],
+    home_team: str = "",
+    away_team: str = "",
+    match_date: Optional[str] = None,
+    con: Optional[sqlite3.Connection] = None,
 ) -> Tuple[float, float, Dict[str, Any]]:
-    """Calculate lineup-adjusted Poisson lambdas based on confirmed absences."""
+    """Calculate lineup-adjusted Poisson lambdas based on confirmed absences and dynamic form."""
+    from .player_form import get_player_dynamic_impact
+
     home_atk_mult = 1.0
     home_def_mult = 1.0
     away_atk_mult = 1.0
@@ -107,19 +113,65 @@ def calculate_lineup_lambdas(
     for item in home_absences:
         name = item if isinstance(item, str) else item.get("player", "")
         tier = lookup_player_tier(name)
-        mults = TIER_MULTIPLIERS.get(tier, TIER_MULTIPLIERS["REGULAR_STARTER"])
-        home_atk_mult *= mults["attack"]
-        home_def_mult *= mults["defense"]
-        parsed_home_absences.append({"player": name, "tier": tier, "impact": mults})
+        base_mults = TIER_MULTIPLIERS.get(tier, TIER_MULTIPLIERS["REGULAR_STARTER"])
+
+        if con is not None and match_date:
+            dyn = get_player_dynamic_impact(
+                con=con,
+                player_name=name,
+                team=home_team,
+                match_date=match_date,
+                base_attack_mult=base_mults["attack"],
+                base_defense_mult=base_mults["defense"],
+            )
+            atk_m = dyn["adj_attack_mult"]
+            def_m = dyn["adj_defense_mult"]
+            form_info = {"form_factor": dyn["form_factor"], "starter_shock": dyn["starter_shock"]}
+        else:
+            atk_m = base_mults["attack"]
+            def_m = base_mults["defense"]
+            form_info = {"form_factor": 1.0, "starter_shock": 1.0}
+
+        home_atk_mult *= atk_m
+        home_def_mult *= def_m
+        parsed_home_absences.append({
+            "player": name,
+            "tier": tier,
+            "impact": {"attack": atk_m, "defense": def_m},
+            "form": form_info,
+        })
 
     parsed_away_absences = []
     for item in away_absences:
         name = item if isinstance(item, str) else item.get("player", "")
         tier = lookup_player_tier(name)
-        mults = TIER_MULTIPLIERS.get(tier, TIER_MULTIPLIERS["REGULAR_STARTER"])
-        away_atk_mult *= mults["attack"]
-        away_def_mult *= mults["defense"]
-        parsed_away_absences.append({"player": name, "tier": tier, "impact": mults})
+        base_mults = TIER_MULTIPLIERS.get(tier, TIER_MULTIPLIERS["REGULAR_STARTER"])
+
+        if con is not None and match_date:
+            dyn = get_player_dynamic_impact(
+                con=con,
+                player_name=name,
+                team=away_team,
+                match_date=match_date,
+                base_attack_mult=base_mults["attack"],
+                base_defense_mult=base_mults["defense"],
+            )
+            atk_m = dyn["adj_attack_mult"]
+            def_m = dyn["adj_defense_mult"]
+            form_info = {"form_factor": dyn["form_factor"], "starter_shock": dyn["starter_shock"]}
+        else:
+            atk_m = base_mults["attack"]
+            def_m = base_mults["defense"]
+            form_info = {"form_factor": 1.0, "starter_shock": 1.0}
+
+        away_atk_mult *= atk_m
+        away_def_mult *= def_m
+        parsed_away_absences.append({
+            "player": name,
+            "tier": tier,
+            "impact": {"attack": atk_m, "defense": def_m},
+            "form": form_info,
+        })
 
     # Home adjusted lambda = Home Attack * Away Defense Conceded
     adj_lambda_home = max(0.20, round(base_lambda_home * home_atk_mult * away_def_mult, 3))
@@ -151,6 +203,8 @@ def evaluate_match_with_lineups(
     ou_line: float = 2.5,
     n_sims: int = 10000,
     seed: int = 42,
+    match_date: Optional[str] = None,
+    con: Optional[sqlite3.Connection] = None,
 ) -> Dict[str, Any]:
     """Recalculate Monte Carlo probabilities with lineup adjustments."""
     from .xg_monte_carlo import evaluate_fixture_monte_carlo
@@ -171,6 +225,10 @@ def evaluate_match_with_lineups(
         base_lambda_away,
         home_absences,
         away_absences,
+        home_team=home_team,
+        away_team=away_team,
+        match_date=match_date,
+        con=con,
     )
 
     adj_sim = evaluate_fixture_monte_carlo(
