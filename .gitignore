@@ -5,11 +5,14 @@
 # data
 data/
 dsa_project/data/
+*.db
 
-# models (keep production multileague_v2 and its sidecar)
+# models (keep production multileague_v2, v3 and sidecars)
 models/*
 !models/multileague_v2.pkl
 !models/multileague_v2.meta.json
+!models/multileague_v3.pkl
+!models/multileague_v3.meta.json
 models/backups/
 
 # reports and logs
@@ -34,3 +37,5 @@ build/
 dist/
 .vscode/
 .agents/
+.codex/
+.impeccable/

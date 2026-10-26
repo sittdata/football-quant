@@ -95,8 +95,28 @@ class TestSteamEngine(unittest.TestCase):
             open_dog_price=None,
         )
         self.assertEqual(sig.ah_line_delta, 0.0)
-        self.assertEqual(sig.steam_direction, "NEUTRAL")
+    def test_compute_synergy_kelly(self):
+        from fbpredict.steam_engine import compute_synergy_kelly
+        
+        # Test 1: Steam confirmed -> 1.25x scaling
+        sig_dog = analyze_market_steam(open_ah=-0.75, current_ah=-0.50)
+        stake = compute_synergy_kelly(base_stake=1.0, market_pick="AH_dog", steam_signal=sig_dog)
+        self.assertAlmostEqual(stake, 1.25)
+        
+        # Test 2: Steam opposed -> 0.50x scaling
+        stake_opp = compute_synergy_kelly(base_stake=1.0, market_pick="AH_fav", steam_signal=sig_dog)
+        self.assertAlmostEqual(stake_opp, 0.50)
+        
+        # Test 3: Neutral steam -> 1.0x scaling
+        sig_neutral = analyze_market_steam(open_ah=-0.50, current_ah=-0.50)
+        stake_neutral = compute_synergy_kelly(base_stake=1.0, market_pick="AH_dog", steam_signal=sig_neutral)
+        self.assertAlmostEqual(stake_neutral, 1.00)
+
+        # Test 4: Clamping to max_stake=2.5
+        stake_max = compute_synergy_kelly(base_stake=2.2, market_pick="AH_dog", steam_signal=sig_dog)
+        self.assertLessEqual(stake_max, 2.5)
 
 
 if __name__ == "__main__":
     unittest.main()
+

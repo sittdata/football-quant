@@ -116,8 +116,8 @@ def calculate_ou_drift(
 
 
 def analyze_market_steam(
-    open_ah: float | None,
-    current_ah: float | None,
+    open_ah: float | None = None,
+    current_ah: float | None = None,
     open_fav_price: float | None = 1.95,
     open_dog_price: float | None = 1.95,
     current_fav_price: float | None = 1.95,
@@ -243,3 +243,60 @@ def evaluate_steam_confirmation(
         "badge_label": "🔥 STEAM CONFIRMED" if is_confirmed else ("⚡ RLM ALERT" if steam_signal.is_rlm else None),
         "description": steam_signal.description,
     }
+
+
+def compute_synergy_kelly(
+    base_stake: float,
+    market_pick: str,
+    steam_signal: SteamSignal | None,
+    min_stake: float = 0.5,
+    max_stake: float = 2.5,
+) -> float:
+    """Dynamically scales Kelly staking according to Sharp Money steam alignment.
+
+    - Confirmed (Model aligns with Sharp Steam): 1.25x scaling factor (Max Alpha)
+    - Opposed (Model opposes Sharp Steam): 0.50x scaling factor (Capital Defense)
+    - Neutral / None: 1.00x base stake
+    """
+    if base_stake is None or base_stake <= 0:
+        return 0.0
+    if steam_signal is None or steam_signal.steam_direction == "NEUTRAL":
+        return round(float(max(min_stake, min(max_stake, base_stake))), 2)
+
+    mkt = str(market_pick).strip()
+    s_dir = steam_signal.steam_direction
+
+    is_confirmed = False
+    is_opposed = False
+
+    if mkt == "AH_dog":
+        if s_dir == "STEAM_DOG":
+            is_confirmed = True
+        elif s_dir == "STEAM_FAV":
+            is_opposed = True
+    elif mkt == "AH_fav":
+        if s_dir == "STEAM_FAV":
+            is_confirmed = True
+        elif s_dir == "STEAM_DOG":
+            is_opposed = True
+    elif mkt == "OU_over":
+        if s_dir == "STEAM_OVER":
+            is_confirmed = True
+        elif s_dir == "STEAM_UNDER":
+            is_opposed = True
+    elif mkt == "OU_under":
+        if s_dir == "STEAM_UNDER":
+            is_confirmed = True
+        elif s_dir == "STEAM_OVER":
+            is_opposed = True
+
+    if is_confirmed:
+        multiplier = 1.25
+    elif is_opposed:
+        multiplier = 0.50
+    else:
+        multiplier = 1.00
+
+    scaled = base_stake * multiplier
+    return round(float(max(min_stake, min(max_stake, scaled))), 2)
+

@@ -1,6 +1,6 @@
 {
   "path": "C:\\Users\\sitti\\OneDrive\\Desktop\\football\\models\\multileague_v2.pkl",
-  "sha256": "1855b67d82d0459ab8b0690bcb76c52f7fbd90c9377bcde5588d4a6e5bda289e",
+  "sha256": "adcd39719d6709deefd3cbc74db8b697ff0620feb309ae6240124f9cb3c05d3a",
   "kind": "xgboost",
   "feature_columns": [
     "rule_match",
@@ -64,12 +64,12 @@
     "ht_to_ft_ratio"
   ],
   "metadata": {
-    "trained_rows": 2196,
-    "trained_from": "2025-10-22 18:45:00+00:00",
-    "trained_to": "2026-11-02 20:00:00+00:00",
+    "trained_rows": 13043,
+    "trained_from": "2022-07-15 19:30:00+00:00",
+    "trained_to": "2026-10-25 20:00:00+00:00",
     "class_balance": {
-      "ah_cover_rate": 0.4640255009107468,
-      "ou_over_rate": 0.5009107468123861
+      "ah_cover_rate": 0.4830177106493905,
+      "ou_over_rate": 0.5234225254926014
     },
     "rolling_window": 5,
     "feature_set": "thscore_v2",

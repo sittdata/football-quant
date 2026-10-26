@@ -8,8 +8,10 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
 from fbpredict.quant_model import QuantModelBundle, train_calibrated_models
+from scripts.tester import load_and_enrich_dataset
 
-df = pd.read_pickle(ROOT_DIR / "data" / "clean_quant_dataset.pkl")
+cache_path = ROOT_DIR / "data" / "clean_quant_dataset.pkl"
+df = load_and_enrich_dataset(cache_path)
 split_idx = int(len(df) * 0.8)
 train = df.iloc[:split_idx].reset_index(drop=True)
 test = df.iloc[split_idx:].reset_index(drop=True)

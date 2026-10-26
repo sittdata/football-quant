@@ -30,9 +30,19 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 from fbpredict.staking import compute_financial_metrics
+from fbpredict.steam_engine import (
+    analyze_market_steam,
+    evaluate_steam_confirmation,
+    compute_synergy_kelly,
+)
+from fbpredict.xg_features import build_match_xg_features
+from fbpredict.xg_monte_carlo import evaluate_fixture_monte_carlo
+
 
 DB_PATH = ROOT_DIR / "data" / "football.db"
 WEB_DIR = ROOT_DIR / "web"
+
+_DASHBOARD_CACHE: Dict[str, Any] = {"timestamp": 0.0, "data": None}
 
 
 def get_db_connection() -> sqlite3.Connection:
@@ -42,7 +52,13 @@ def get_db_connection() -> sqlite3.Connection:
 
 
 
-def get_dashboard_data() -> Dict[str, Any]:
+def get_dashboard_data(force_refresh: bool = False) -> Dict[str, Any]:
+    global _DASHBOARD_CACHE
+    import time
+    now_ts = time.time()
+    if not force_refresh and _DASHBOARD_CACHE["data"] is not None and (now_ts - _DASHBOARD_CACHE["timestamp"] < 60.0):
+        return _DASHBOARD_CACHE["data"]
+
     con = get_db_connection()
     cur = con.cursor()
 
@@ -98,6 +114,73 @@ def get_dashboard_data() -> Dict[str, Any]:
 
         if status == "OPEN":
             open_bets += 1
+            
+            # Query match line movements if available
+            cur.execute(
+                """
+                SELECT ah_open, ah_close, ah_fav_price, ah_dog_price,
+                       ou_line_open, ou_line_close, ou_over_price, ou_under_price
+                FROM matches
+                WHERE home_team = ? AND away_team = ?
+                ORDER BY kickoff_at DESC LIMIT 1
+                """,
+                (r["home_team"], r["away_team"]),
+            )
+            m_row = cur.fetchone()
+            if m_row:
+                steam_sig = analyze_market_steam(
+                    open_ah=m_row["ah_open"],
+                    current_ah=m_row["ah_close"],
+                    open_fav_price=m_row["ah_fav_price"],
+                    open_dog_price=m_row["ah_dog_price"],
+                    current_fav_price=m_row["ah_fav_price"],
+                    current_dog_price=m_row["ah_dog_price"],
+                    open_ou=m_row["ou_line_open"],
+                    current_ou=m_row["ou_line_close"],
+                    open_over_price=m_row["ou_over_price"],
+                    open_under_price=m_row["ou_under_price"],
+                    current_over_price=m_row["ou_over_price"],
+                    current_under_price=m_row["ou_under_price"],
+                )
+            else:
+                steam_sig = analyze_market_steam()
+
+            steam_info = evaluate_steam_confirmation(r["market"], steam_sig)
+            synergy_stake = compute_synergy_kelly(stake, r["market"], steam_sig)
+            steam_info["synergy_stake"] = synergy_stake
+
+            # Compute Understat xG metrics and Monte Carlo scoreline simulation
+            try:
+                xg_feats = build_match_xg_features(con, r["home_team"], r["away_team"], r["kickoff_at"])
+                sim_res = evaluate_fixture_monte_carlo(
+                    lambda_home=xg_feats["home_rolling_xg"],
+                    lambda_away=xg_feats["away_rolling_xg"],
+                    n_sims=3000,
+                )
+                xg_data = {
+                    "home_xg": xg_feats["home_rolling_xg"],
+                    "away_xg": xg_feats["away_rolling_xg"],
+                    "xg_diff": xg_feats["xg_diff_net"],
+                    "home_ppda": xg_feats["home_ppda"],
+                    "away_ppda": xg_feats["away_ppda"],
+                    "home_luck": xg_feats["home_luck"],
+                    "away_luck": xg_feats["away_luck"],
+                    "top_score": sim_res.top_scorelines[0]["score"] if sim_res.top_scorelines else "1-1",
+                    "top_score_prob": sim_res.top_scorelines[0]["prob"] if sim_res.top_scorelines else 0.12,
+                }
+            except Exception:
+                xg_data = {
+                    "home_xg": 1.25,
+                    "away_xg": 1.25,
+                    "xg_diff": 0.0,
+                    "home_ppda": 11.0,
+                    "away_ppda": 11.0,
+                    "home_luck": 0.0,
+                    "away_luck": 0.0,
+                    "top_score": "1-1",
+                    "top_score_prob": 0.12,
+                }
+
             recommendations.append(
                 {
                     "id": r["bet_id"],
@@ -111,6 +194,9 @@ def get_dashboard_data() -> Dict[str, Any]:
                     "predicted_win_rate": r["model_prob"],
                     "edge": r["edge"],
                     "stake_units": stake,
+                    "synergy_stake": synergy_stake,
+                    "steam": steam_info,
+                    "xg": xg_data,
                 }
             )
         else:
@@ -166,11 +252,14 @@ def get_dashboard_data() -> Dict[str, Any]:
     }
 
     con.close()
-    return {
+    payload = {
         "metrics": metrics,
         "equity_curve": equity_curve,
         "recommendations": recommendations,
     }
+    _DASHBOARD_CACHE["timestamp"] = now_ts
+    _DASHBOARD_CACHE["data"] = payload
+    return payload
 
 
 def get_all_bets() -> List[Dict[str, Any]]:

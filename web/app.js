@@ -33,9 +33,9 @@ async function loadDashboard() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
 
-    updateKpis(data.metrics || {});
-    renderEquityChart(data.equity_curve || []);
-    renderRecommendations(data.recommendations || []);
+    try { updateKpis(data.metrics || {}); } catch (e) { console.error('updateKpis error:', e); }
+    try { renderEquityChart(data.equity_curve || []); } catch (e) { console.error('renderEquityChart error:', e); }
+    try { renderRecommendations(data.recommendations || []); } catch (e) { console.error('renderRecommendations error:', e); }
   } catch (err) {
     console.error('Failed to load dashboard metrics:', err);
   }
@@ -75,17 +75,25 @@ function updateKpis(m) {
   pfEl.innerText = `Profit Factor: ${pf > 50 ? '∞' : pf.toFixed(2)}`;
 
   const maxDdEl = document.getElementById('kpiMaxDd');
-  const maxDd = m.max_drawdown !== undefined ? m.max_drawdown : 0;
-  maxDdEl.innerHTML = `${maxDd.toFixed(2)} <span class="kpi-unit">Units</span>`;
+  if (maxDdEl) {
+    const maxDd = m.max_drawdown !== undefined ? m.max_drawdown : 0;
+    maxDdEl.innerHTML = `${maxDd.toFixed(2)} <span class="kpi-unit">Units</span>`;
+  }
 
   const sharpeEl = document.getElementById('kpiSharpe');
-  sharpeEl.innerText = `Sharpe: ${(m.sharpe_ratio || 0).toFixed(2)} | Sortino: ${(m.sortino_ratio || 0).toFixed(2)}`;
+  if (sharpeEl) {
+    sharpeEl.innerText = `Sharpe: ${(m.sharpe_ratio || 0).toFixed(2)} | Sortino: ${(m.sortino_ratio || 0).toFixed(2)}`;
+  }
 
   const totalBetsEl = document.getElementById('kpiTotalBets');
-  totalBetsEl.innerHTML = `${m.total_bets || 0} <span class="kpi-unit">Picks</span>`;
+  if (totalBetsEl) {
+    totalBetsEl.innerHTML = `${m.total_bets || 0} <span class="kpi-unit">Picks</span>`;
+  }
 
   const openCountEl = document.getElementById('kpiOpenCount');
-  openCountEl.innerText = `${m.open_bets || 0} Open | ${m.settled_bets || 0} Settled`;
+  if (openCountEl) {
+    openCountEl.innerText = `${m.open_bets || 0} Open | ${m.settled_bets || 0} Settled`;
+  }
 }
 
 /**
@@ -159,9 +167,9 @@ function renderEquityChart(curveData) {
       },
       scales: {
         x: {
-          grid: { color: 'rgba(255, 255, 255, 0.03)' },
+          grid: { color: 'rgba(255, 255, 255, 0.04)' },
           ticks: {
-            color: '#64748b',
+            color: '#8e9db3',
             font: { family: 'JetBrains Mono', size: 10 },
             maxTicksLimit: 12
           }
@@ -169,7 +177,7 @@ function renderEquityChart(curveData) {
         y: {
           grid: { color: 'rgba(255, 255, 255, 0.04)' },
           ticks: {
-            color: '#64748b',
+            color: '#8e9db3',
             font: { family: 'JetBrains Mono', size: 11 },
             callback: function(value) {
               return (value >= 0 ? '+' : '') + value.toFixed(1) + ' U';
@@ -205,14 +213,69 @@ function renderRecommendations(recs) {
   container.innerHTML = recs.map(rec => {
     const edgeVal = (rec.edge * 100).toFixed(1);
     const probVal = (rec.predicted_win_rate * 100).toFixed(1);
-    const isSteam = rec.pick && rec.pick.includes('🔥');
-    const isRlm = rec.pick && rec.pick.includes('⚡');
-    
+    const baseStake = Number(rec.stake_units || 1.0);
+    const synergyStake = Number(rec.synergy_stake || baseStake);
+
     let steamBadge = '';
-    if (isSteam) {
-      steamBadge = '<span class="badge badge-steam" title="Aligned with Sharp Money Movement">🔥 STEAM</span>';
-    } else if (isRlm) {
-      steamBadge = '<span class="badge badge-rlm" title="Reverse Line Movement Detected">⚡ RLM</span>';
+    if (rec.steam) {
+      const steamDesc = rec.steam.detail || rec.steam.description || 'Steam Signal';
+      if (rec.steam.is_confirmed) {
+        steamBadge = `<span class="badge badge-steam-confirmed" title="${escapeHtml(steamDesc)}">🔥 STEAM CONFIRMED</span>`;
+      } else if (rec.steam.is_rlm) {
+        steamBadge = `<span class="badge badge-steam-rlm" title="${escapeHtml(steamDesc)}">⚡ RLM ALERT</span>`;
+      } else if (rec.steam.is_conflict) {
+        steamBadge = `<span class="badge badge-steam-conflict" title="${escapeHtml(steamDesc)}">⚠️ STEAM CONFLICT</span>`;
+      } else {
+        steamBadge = `<span class="badge badge-steam-neutral" title="Line Movement Stable">STABLE</span>`;
+      }
+    } else if (rec.pick && rec.pick.includes('🔥')) {
+      steamBadge = '<span class="badge badge-steam-confirmed">🔥 STEAM CONFIRMED</span>';
+    } else if (rec.pick && rec.pick.includes('⚡')) {
+      steamBadge = '<span class="badge badge-steam-rlm">⚡ RLM ALERT</span>';
+    }
+
+    let stakeHtml = `<div class="rec-stake">Kelly: ${baseStake.toFixed(2)}U</div>`;
+    if (synergyStake > baseStake + 0.01) {
+      stakeHtml = `<div class="rec-stake stake-boost" title="Steam Confirmed: +25% Stake Boost">Kelly: ${synergyStake.toFixed(2)}U <span style="font-size:10px;">(+25% 🔥)</span></div>`;
+    } else if (synergyStake < baseStake - 0.01) {
+      stakeHtml = `<div class="rec-stake stake-cut" title="Steam Conflict: -50% Defense Reduction">Kelly: ${synergyStake.toFixed(2)}U <span style="font-size:10px;">(-50% ⚠️)</span></div>`;
+    }
+
+    let xgHtml = '';
+    if (rec.xg) {
+      const hXg = Number(rec.xg.home_xg || 1.25).toFixed(2);
+      const aXg = Number(rec.xg.away_xg || 1.25).toFixed(2);
+      const diffVal = Number(rec.xg.xg_diff || 0.0);
+      const diffStr = diffVal >= 0 ? `+${diffVal.toFixed(2)}` : diffVal.toFixed(2);
+      const topScore = rec.xg.top_score || '1-1';
+      const scoreProb = (Number(rec.xg.top_score_prob || 0.12) * 100).toFixed(0);
+
+      const hPpda = Number(rec.xg.home_ppda || 11.0);
+      let pressTag = '';
+      if (hPpda < 9.0) {
+        pressTag = '<span class="tactical-tag-press" title="High-Pressing Intensity">⚡ High-Press</span>';
+      } else if (hPpda > 14.0) {
+        pressTag = '<span class="tactical-tag-block" title="Low-Block Defensive Line">🛡️ Low-Block</span>';
+      }
+
+      let luckBadge = '';
+      const hLuck = Number(rec.xg.home_luck || 0.0);
+      if (hLuck > 0.6) {
+        luckBadge = '<span class="badge-luck-warn" title="Overperforming xG: Unsustainable finishing variance">🎯 Luck Alert</span>';
+      }
+
+      xgHtml = `
+        <div class="rec-xg-card">
+          <div class="xg-dominance-row">
+            <span>xG Dominance: <b>${hXg}</b> vs <b>${aXg}</b> <small style="color:var(--text-muted)">(${diffStr})</small></span>
+            <span class="xg-score-tag">Sim: ${topScore} (${scoreProb}%)</span>
+          </div>
+          <div style="display:flex; gap:6px; align-items:center;">
+            ${pressTag}
+            ${luckBadge}
+          </div>
+        </div>
+      `;
     }
 
     return `
@@ -225,13 +288,14 @@ function renderRecommendations(recs) {
           <span class="rec-edge-badge">+${edgeVal}% Edge</span>
         </div>
         <div class="rec-match">${escapeHtml(rec.home_team)} <span style="color:var(--text-muted)">vs</span> ${escapeHtml(rec.away_team)}</div>
+        ${xgHtml}
         <div class="rec-footer">
           <div class="rec-pick">
             <span class="badge ${rec.market === 'AH_dog' ? 'badge-open' : (rec.market === 'AH_fav' ? 'badge-steam' : 'badge-draw')}">${escapeHtml(rec.pick)}</span>
             <span>@ ${Number(rec.odds).toFixed(2)}</span>
             <span style="font-size: 11px; color: var(--text-muted);">(${probVal}% win)</span>
           </div>
-          <div class="rec-stake">Kelly: ${Number(rec.stake_units || 1.0).toFixed(2)}U</div>
+          ${stakeHtml}
         </div>
       </div>
     `;
@@ -309,8 +373,8 @@ function renderLedgerTable() {
 
     return `
       <tr>
-        <td style="font-family: var(--font-mono); font-size: 11px;">#${b.id}</td>
-        <td style="font-family: var(--font-mono); font-size: 11px;">${kickoffStr}</td>
+        <td style="font-family: var(--font-mono); font-size: 12px;">#${b.id}</td>
+        <td style="font-family: var(--font-mono); font-size: 12px;">${kickoffStr}</td>
         <td><span class="rec-league">${escapeHtml(b.league || 'LEAGUE')}</span></td>
         <td style="font-weight: 600;">${escapeHtml(b.home_team)} <span style="color:var(--text-muted)">vs</span> ${escapeHtml(b.away_team)}</td>
         <td><span class="badge badge-draw">${escapeHtml(b.market_type || 'AH')}</span></td>
@@ -334,20 +398,39 @@ async function triggerScan() {
   const btn = document.getElementById('btnScan');
   const originalHtml = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = '<span>⏳</span> Scanning 12 Leagues...';
+  btn.innerHTML = '<svg class="spin-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" width="14" height="14"><circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-dashoffset="12"/><path d="M12 2v4"/></svg> <span>Syncing Portfolio...</span>';
 
   try {
+    // 1. Auto-settle any completed fixtures first
+    await fetch('/api/settle', { method: 'POST' }).catch(() => {});
+    // 2. Scan fresh odds & detect steam signals
     const res = await fetch('/api/scan', { method: 'POST' });
     const data = await res.json();
-    alert(`Scan Completed!\nEvaluated: ${data.evaluated || 0} fixtures\nNew Picks Logged: ${data.logged || 0}`);
     await loadDashboard();
     await loadBets();
+    const evaluated = data.evaluated || 0;
+    const logged = data.logged || 0;
+    showToast(`⚡ Sync complete: ${evaluated} fixtures priced, ${logged} actionable picks.`);
   } catch (err) {
-    alert(`Scan error: ${err.message}`);
+    showToast(`❌ Sync error: ${err.message}`);
   } finally {
     btn.disabled = false;
     btn.innerHTML = originalHtml;
   }
+}
+
+function showToast(msg) {
+  let toast = document.getElementById('quantToast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'quantToast';
+    toast.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#202020;border:1px solid #444;color:#fff;padding:10px 18px;border-radius:8px;font-family:var(--font-mono);font-size:12px;z-index:9999;box-shadow:0 6px 20px rgba(0,0,0,0.6);transition:opacity 0.3s ease;';
+    document.body.appendChild(toast);
+  }
+  toast.innerText = msg;
+  toast.style.opacity = '1';
+  clearTimeout(window.__toastTimer);
+  window.__toastTimer = setTimeout(() => { toast.style.opacity = '0'; }, 3500);
 }
 
 /**

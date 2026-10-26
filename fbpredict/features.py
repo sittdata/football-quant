@@ -212,6 +212,22 @@ FEATURE_SETS["thscore_xgb"] = (
     RAW_FEATURE_COLUMNS + RULE_SET_FILTERED_NOVIG_FEATURES + THSCORE_FEATURES + CLOSING_FEATURES_NOVIG
 )
 
+XG_FEATURES: tuple[str, ...] = (
+    "home_rolling_xg",
+    "away_rolling_xg",
+    "home_rolling_xga",
+    "away_rolling_xga",
+    "xg_diff_net",
+    "xga_diff_net",
+    "npxgd_spread",
+    "ppda_clash",
+    "luck_spread",
+)
+
+FEATURE_SETS["xg_v3"] = (
+    FEATURE_COLUMNS + RULE_SET_FILTERED_NOVIG_FEATURES + THSCORE_FEATURES + XG_FEATURES + CLOSING_FEATURES_NOVIG
+)
+
 
 
 def feature_set_columns(feature_set: str) -> tuple[str, ...]:
@@ -677,11 +693,14 @@ def build_features(
     elif feature_set == "filtered":
         out = price_pool_rules.add_rule_features(out, table=price_pool_rules.RULES_FILTERED)
         out = _add_closing_features(out, novig=False, fill=use_closing_features)
-    elif feature_set in ("filtered_novig", "thscore_v2"):
+    elif feature_set in ("filtered_novig", "thscore_v2", "xg_v3"):
         out = price_pool_rules.add_rule_features(
             out, table=price_pool_rules.RULES_FILTERED_NOVIG, suffix="_nv", novig=True
         )
         out = _add_closing_features(out, novig=True, fill=use_closing_features)
+        if feature_set == "xg_v3":
+            from .xg_features import enrich_dataframe_with_xg
+            out = enrich_dataframe_with_xg(out)
     elif feature_set == "thscore_xgb":
         out = price_pool_rules.add_rule_features(
             out, table=price_pool_rules.RULES_FILTERED_NOVIG, suffix="_nv", novig=True
