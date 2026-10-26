@@ -124,6 +124,28 @@ CREATE TABLE IF NOT EXISTS runs (
     metrics_json  TEXT,
     notes         TEXT
 );
+
+CREATE TABLE IF NOT EXISTS player_match_stats (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id       TEXT,
+    player_name     TEXT NOT NULL,
+    team            TEXT NOT NULL,
+    match_date      TEXT NOT NULL,
+    position        TEXT NOT NULL,   -- 'FW', 'MF', 'DF', 'GK'
+    minutes         INTEGER DEFAULT 0,
+    is_starter      INTEGER DEFAULT 0,
+    goals           INTEGER DEFAULT 0,
+    assists         INTEGER DEFAULT 0,
+    shots           INTEGER DEFAULT 0,
+    xg              REAL DEFAULT 0.0,
+    xa              REAL DEFAULT 0.0,
+    key_passes      INTEGER DEFAULT 0,
+    rating          REAL DEFAULT 6.5,
+    clean_sheet     INTEGER DEFAULT 0,
+    UNIQUE (player_name, team, match_date)
+);
+CREATE INDEX IF NOT EXISTS idx_player_date ON player_match_stats (player_name, match_date);
+CREATE INDEX IF NOT EXISTS idx_player_team ON player_match_stats (team, match_date);
 """
 
 
@@ -200,8 +222,12 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     return con
 
 
-def init_db(db_path: str | Path) -> sqlite3.Connection:
-    con = connect(db_path)
+def init_db(db_path: str | Path | sqlite3.Connection) -> sqlite3.Connection:
+    if isinstance(db_path, sqlite3.Connection):
+        con = db_path
+    else:
+        con = connect(db_path)
+    con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
     con.commit()
     _migrate(con)
