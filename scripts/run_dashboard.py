@@ -37,6 +37,7 @@ from fbpredict.steam_engine import (
 )
 from fbpredict.xg_features import build_match_xg_features
 from fbpredict.xg_monte_carlo import evaluate_fixture_monte_carlo
+from fbpredict.lineup_engine import calculate_lineup_lambdas
 
 
 DB_PATH = ROOT_DIR / "data" / "football.db"
@@ -181,6 +182,14 @@ def get_dashboard_data(force_refresh: bool = False) -> Dict[str, Any]:
                     "top_score_prob": 0.12,
                 }
 
+            # Lineup impact intelligence
+            _, _, lineup_intel = calculate_lineup_lambdas(
+                base_lambda_home=xg_data["home_xg"],
+                base_lambda_away=xg_data["away_xg"],
+                home_absences=[],
+                away_absences=[],
+            )
+
             recommendations.append(
                 {
                     "id": r["bet_id"],
@@ -197,6 +206,7 @@ def get_dashboard_data(force_refresh: bool = False) -> Dict[str, Any]:
                     "synergy_stake": synergy_stake,
                     "steam": steam_info,
                     "xg": xg_data,
+                    "lineup": lineup_intel,
                 }
             )
         else:
@@ -345,6 +355,14 @@ class QuantDashboardHandler(BaseHTTPRequestHandler):
         if path == "/api/bets":
             bets = get_all_bets()
             self.send_json(bets)
+            return
+
+        if path == "/api/lineups":
+            self.send_json({
+                "status": "ok",
+                "rules": "Tier 1 absences trigger Poisson lambda penalties (-22% atk for Striker, -15% for Playmaker, +18% defense penalty for GK/CB)",
+                "status_watch": "Active 60-min before kickoff",
+            })
             return
 
         # Serve static assets
