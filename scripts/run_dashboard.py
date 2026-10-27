@@ -352,6 +352,57 @@ class QuantDashboardHandler(BaseHTTPRequestHandler):
             self.send_json(data)
             return
 
+        if path == "/api/syndicate":
+            try:
+                from fbpredict.syndicate_engine import SyndicateComboEngine
+                engine = SyndicateComboEngine()
+                signals = engine.scan_opportunities(max_fixtures=12)
+                results = []
+                for s in signals:
+                    d = s.to_dict()
+                    ex = d.get("execution", {})
+                    sb = d.get("sharp_baseline", {})
+                    lp = d.get("live_pressure", {})
+                    # Flatten for easy frontend consumption
+                    flat = {
+                        "match_id": d.get("match_id"),
+                        "home_team": d.get("home_team"),
+                        "away_team": d.get("away_team"),
+                        "league": d.get("league"),
+                        "is_live": d.get("is_live"),
+                        "current_minute": d.get("current_minute"),
+                        "current_score": d.get("current_score"),
+                        # Sharp baseline
+                        "market_vig_percent": sb.get("vig_percent"),
+                        "shin_insider_z": sb.get("insider_z"),
+                        "pinnacle_quoted_odds": sb.get("quoted_odds"),
+                        "shin_true_probs": sb.get("shin_true_probs"),
+                        # Live pressure
+                        "total_xg_home": lp.get("xg_home", 0.0),
+                        "total_xg_away": lp.get("xg_away", 0.0),
+                        "momentum_10m_avg": lp.get("momentum_10m_avg"),
+                        "dominating_side": lp.get("dominating_side"),
+                        # Execution
+                        "verdict": ex.get("verdict", "NEUTRAL"),
+                        "recommended_market": ex.get("recommended_market"),
+                        "edge_percent": ex.get("edge_percent", 0.0),
+                        "quarter_kelly_stake_percent": ex.get("quarter_kelly_stake_percent", 0.0),
+                        "rationale": ex.get("rationale"),
+                    }
+                    results.append(flat)
+                actionable = [r for r in results if r.get("verdict", "NEUTRAL") != "NEUTRAL"]
+                self.send_json({
+                    "status": "ok",
+                    "scanned": len(results),
+                    "actionable": len(actionable),
+                    "signals": results,
+                })
+            except Exception as e:
+                import traceback
+                self.send_json({"status": "error", "message": str(e), "trace": traceback.format_exc()}, status=500)
+            return
+
+
         if path == "/api/bets":
             bets = get_all_bets()
             self.send_json(bets)

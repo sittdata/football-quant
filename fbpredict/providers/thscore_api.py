@@ -55,7 +55,9 @@ class ThscoreApiProvider(BaseProvider):
     def __init__(self, config: Config | None = None, con: sqlite3.Connection | None = None):
         self.config = config or Config.from_env()
         self.con = con
-        self.api_key = self.config.thscore_api_key or "B95794317BA548F2"
+        self.api_key = self.config.thscore_api_key
+        if not self.api_key:
+            raise ProviderError("THSCORE_API_KEY is not configured in .env or Config")
 
     def _fetch(self, endpoint: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """Make an authenticated request and record the raw payload."""

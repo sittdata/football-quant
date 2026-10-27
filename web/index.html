@@ -3,9 +3,43 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Cook45 Quant Terminal | Quantitative Football Hedge Fund Dashboard</title>
-  <meta name="description" content="Institutional Quantitative Football Investment Dashboard. Powered by Walk-Forward Calibrated Machine Learning Models and Fractional Kelly Staking.">
+  <title>Cook45 Quant Terminal | Dual-Model Football Dashboard</title>
+  <meta name="description" content="Institutional Quantitative Football Dashboard. Legacy Model + Syndicate Quant Suite (Pinnacle + SofaScore + Shin).">
   
+  <style>
+    .model-tabs { display:flex; gap:0; border-bottom:2px solid var(--border,#2a2840); margin-bottom:0; }
+    .model-tab { padding:12px 26px; font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:#888; background:transparent; border:none; border-bottom:3px solid transparent; margin-bottom:-2px; cursor:pointer; transition:all .2s; display:flex; align-items:center; gap:8px; }
+    .model-tab:hover { color:#ccc; }
+    .model-tab.active-legacy { color:#34d399; border-bottom-color:#34d399; }
+    .model-tab.active-syndicate { color:#f59e0b; border-bottom-color:#f59e0b; }
+    .tab-dot { width:7px; height:7px; border-radius:50%; display:inline-block; }
+    .dot-legacy { background:#34d399; }
+    .dot-syndicate { background:#f59e0b; }
+    .model-panel { display:none; }
+    .model-panel.active { display:block; }
+    .syndicate-card { background:linear-gradient(135deg,rgba(245,158,11,.06),rgba(20,18,38,.9)); border:1px solid rgba(245,158,11,.25); border-radius:12px; padding:18px 20px; margin-bottom:12px; transition:border-color .2s; }
+    .syndicate-card:hover { border-color:rgba(245,158,11,.5); }
+    .syndicate-card.neutral { background:rgba(255,255,255,.02); border-color:#2a2840; opacity:.5; }
+    .syndicate-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; }
+    .syndicate-match { font-weight:700; font-size:15px; }
+    .syndicate-league { font-size:11px; color:#888; font-family:'JetBrains Mono',monospace; margin-top:2px; }
+    .badge-alpha { background:linear-gradient(135deg,#f59e0b,#d97706); color:#000; font-weight:800; font-size:10px; padding:3px 9px; border-radius:4px; letter-spacing:.06em; }
+    .badge-neutral-syn { background:rgba(255,255,255,.07); color:#888; font-size:10px; padding:3px 8px; border-radius:4px; font-family:monospace; }
+    .syndicate-metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:10px; }
+    .syn-m-label { font-size:10px; color:#888; font-family:monospace; text-transform:uppercase; margin-bottom:2px; }
+    .syn-m-value { font-size:14px; font-weight:700; color:#f59e0b; font-family:monospace; }
+    .syn-pick-bar { background:rgba(245,158,11,.12); border-left:3px solid #f59e0b; border-radius:0 6px 6px 0; padding:7px 12px; margin-top:10px; font-size:12px; color:#fcd34d; font-family:monospace; }
+    .syn-rationale { margin-top:8px; font-size:11px; color:#888; line-height:1.5; }
+    .syn-top-bar { display:flex; justify-content:space-between; align-items:center; padding:16px 20px 8px; }
+    .syn-stats { display:flex; gap:12px; }
+    .syn-stat { text-align:center; background:rgba(245,158,11,.08); border:1px solid rgba(245,158,11,.2); border-radius:8px; padding:8px 14px; }
+    .syn-stat-val { font-size:20px; font-weight:800; color:#f59e0b; font-family:monospace; line-height:1; }
+    .syn-stat-lbl { font-size:10px; color:#888; font-family:monospace; margin-top:2px; }
+    .btn-scan-syn { background:linear-gradient(135deg,#d97706,#92400e); color:#fff; border:none; padding:9px 18px; border-radius:8px; font-size:12px; font-weight:700; font-family:monospace; cursor:pointer; letter-spacing:.05em; transition:opacity .2s; }
+    .btn-scan-syn:hover { opacity:.85; }
+    .btn-scan-syn:disabled { opacity:.4; cursor:not-allowed; }
+  </style>
+
   <!-- Distinctive Typography: Albert Sans, JetBrains Mono & Kanit (ExtraLight 200) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -91,20 +125,61 @@
         </div>
       </section>
 
-      <!-- Right: Model High-Alpha Opportunities -->
-      <section class="quant-panel scanner-card">
-        <div class="card-header">
-          <div class="card-title">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
-            <span>Recommended Alpha Fixtures</span>
-          </div>
-          <span class="badge badge-open" id="openPicksCount">0 PICKS</span>
+      <!-- Right: Model High-Alpha Opportunities (DUAL TAB) -->
+      <section class="quant-panel scanner-card" style="display:flex; flex-direction:column;">
+
+        <!-- Tab switcher -->
+        <div class="model-tabs">
+          <button class="model-tab active-legacy" id="tab-legacy" onclick="switchTab('legacy')">
+            <span class="tab-dot dot-legacy"></span>
+            LEGACY MODEL
+            <span class="badge badge-open" id="openPicksCount" style="margin-left:4px;">0</span>
+          </button>
+          <button class="model-tab" id="tab-syndicate" onclick="switchTab('syndicate')">
+            <span class="tab-dot dot-syndicate"></span>
+            SYNDICATE QUANT SUITE
+            <span id="synPickBadge" style="background:rgba(245,158,11,.15);color:#f59e0b;font-size:10px;padding:2px 7px;border-radius:4px;margin-left:4px;font-weight:800;">0 ALPHA</span>
+          </button>
         </div>
-        <div class="recommendations-list" id="recommendationsList">
-          <div style="text-align: center; color: var(--text-muted); padding: 40px 0; font-family: var(--font-mono); font-size: 13px;">
-            Loading qualified quant opportunities...
+
+        <!-- ── Panel: Legacy Model ── -->
+        <div class="model-panel active" id="panel-legacy">
+          <div style="padding:10px 16px 4px; font-size:11px; color:#666; font-family:monospace;">
+            xG + PPDA + Walk-Forward ML → AH / OU Markets
+          </div>
+          <div class="recommendations-list" id="recommendationsList">
+            <div style="text-align:center;color:#666;padding:36px 0;font-family:monospace;font-size:13px;">
+              Loading legacy model opportunities...
+            </div>
           </div>
         </div>
+
+        <!-- ── Panel: Syndicate Quant Suite ── -->
+        <div class="model-panel" id="panel-syndicate">
+          <div class="syn-top-bar">
+            <div class="syn-stats">
+              <div class="syn-stat">
+                <div class="syn-stat-val" id="synScanned">–</div>
+                <div class="syn-stat-lbl">Scanned</div>
+              </div>
+              <div class="syn-stat">
+                <div class="syn-stat-val" id="synActionable" style="color:#34d399;">–</div>
+                <div class="syn-stat-lbl">Alpha Signals</div>
+              </div>
+              <div class="syn-stat" style="min-width:130px;">
+                <div class="syn-stat-val" style="font-size:10px;color:#888;font-weight:500;">Pinnacle + SofaScore + Shin</div>
+                <div class="syn-stat-lbl">Sources</div>
+              </div>
+            </div>
+            <button class="btn-scan-syn" id="btnScanSyn" onclick="loadSyndicateData()">⚡ REFRESH</button>
+          </div>
+          <div style="padding:0 16px 16px;" id="syndicateList">
+            <div style="text-align:center;color:#666;padding:36px 0;font-family:monospace;font-size:13px;">
+              Click ⚡ REFRESH to fetch live Syndicate alpha signals...
+            </div>
+          </div>
+        </div>
+
       </section>
 
     </div>
@@ -114,7 +189,7 @@
       <div class="card-header">
         <div class="card-title">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-          <span>Institutional Paper Trading Ledger</span>
+          <span>Institutional Paper Trading Ledger (Legacy Model)</span>
         </div>
         <div style="display: flex; gap: 8px;">
           <button class="btn btn-secondary" style="padding: 5px 12px; font-size: 12px;" onclick="filterLedger('ALL')">ALL</button>
@@ -127,27 +202,14 @@
         <table class="ledger-table" id="ledgerTable">
           <thead>
             <tr>
-              <th>ID</th>
-              <th>Kickoff</th>
-              <th>League</th>
-              <th>Fixture</th>
-              <th>Market</th>
-              <th>Pick Description</th>
-              <th>Odds</th>
-              <th>Win Prob</th>
-              <th>Edge</th>
-              <th>Stake</th>
-              <th>Score</th>
-              <th>Status</th>
-              <th>Net P&L</th>
+              <th>ID</th><th>Kickoff</th><th>League</th><th>Fixture</th>
+              <th>Market</th><th>Pick Description</th><th>Odds</th>
+              <th>Win Prob</th><th>Edge</th><th>Stake</th>
+              <th>Score</th><th>Status</th><th>Net P&L</th>
             </tr>
           </thead>
           <tbody id="ledgerTableBody">
-            <tr>
-              <td colspan="13" style="text-align: center; color: var(--text-muted); padding: 30px;">
-                Loading ledger records...
-              </td>
-            </tr>
+            <tr><td colspan="13" style="text-align:center;color:#666;padding:30px;">Loading ledger records...</td></tr>
           </tbody>
         </table>
       </div>

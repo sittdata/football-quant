@@ -457,6 +457,7 @@ async function triggerSettle() {
 }
 
 /**
+/**
  * Escape HTML utility
  */
 function escapeHtml(str) {
@@ -468,3 +469,131 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
 }
+
+/* ══════════════════════════════════════════════════
+   DUAL-MODEL TAB SYSTEM
+══════════════════════════════════════════════════ */
+
+function switchTab(model) {
+  // Update tab buttons
+  document.getElementById('tab-legacy').className = 'model-tab' + (model === 'legacy' ? ' active-legacy' : '');
+  document.getElementById('tab-syndicate').className = 'model-tab' + (model === 'syndicate' ? ' active-syndicate' : '');
+
+  // Show/hide panels
+  document.getElementById('panel-legacy').classList.toggle('active', model === 'legacy');
+  document.getElementById('panel-syndicate').classList.toggle('active', model === 'syndicate');
+
+  // Auto-load syndicate data on first switch
+  if (model === 'syndicate') {
+    const list = document.getElementById('syndicateList');
+    if (list && list.dataset.loaded !== 'true') {
+      loadSyndicateData();
+    }
+  }
+}
+
+async function loadSyndicateData() {
+  const btn = document.getElementById('btnScanSyn');
+  const list = document.getElementById('syndicateList');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Scanning...'; }
+  if (list) list.innerHTML = '<div style="text-align:center;color:#888;padding:36px 0;font-family:monospace;font-size:13px;">Connecting to Pinnacle + SofaScore feeds...</div>';
+
+  try {
+    const res = await fetch('/api/syndicate');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    if (data.status === 'error') throw new Error(data.message);
+
+    const signals = data.signals || [];
+    const actionable = signals.filter(s => s.verdict && s.verdict !== 'NEUTRAL');
+
+    // Update stats
+    const el = (id) => document.getElementById(id);
+    if (el('synScanned')) el('synScanned').textContent = data.scanned ?? signals.length;
+    if (el('synActionable')) el('synActionable').textContent = data.actionable ?? actionable.length;
+    if (el('synPickBadge')) el('synPickBadge').textContent = `${data.actionable ?? actionable.length} ALPHA`;
+
+    if (!list) return;
+    list.dataset.loaded = 'true';
+
+    if (signals.length === 0) {
+      list.innerHTML = '<div style="text-align:center;color:#888;padding:36px 0;font-family:monospace;">No fixtures available right now. Try again later.</div>';
+      return;
+    }
+
+    // Sort: actionable first, then neutral
+    const sorted = [...actionable, ...signals.filter(s => !s.verdict || s.verdict === 'NEUTRAL')];
+
+    list.innerHTML = sorted.map(s => {
+      const isAlpha = s.verdict && s.verdict !== 'NEUTRAL';
+      const vig = s.market_vig_percent != null ? s.market_vig_percent.toFixed(1) : '–';
+      const z = s.shin_insider_z != null ? (s.shin_insider_z * 100).toFixed(1) : '–';
+      const edge = s.edge_percent != null ? s.edge_percent.toFixed(1) : '–';
+      const kelly = s.quarter_kelly_stake_percent != null ? s.quarter_kelly_stake_percent.toFixed(2) : '–';
+      const homeXg = s.total_xg_home != null ? s.total_xg_home.toFixed(2) : '–';
+      const awayXg = s.total_xg_away != null ? s.total_xg_away.toFixed(2) : '–';
+      const status = s.is_live
+        ? `<span style="color:#34d399;font-weight:700;">● LIVE ${s.current_minute ? s.current_minute + "'" : ''}</span>`
+        : `<span style="color:#888;">○ UPCOMING</span>`;
+
+      return `
+        <div class="syndicate-card${isAlpha ? '' : ' neutral'}">
+          <div class="syndicate-header">
+            <div>
+              <div class="syndicate-match">${escapeHtml(s.home_team)} <span style="color:#555;">vs</span> ${escapeHtml(s.away_team)}</div>
+              <div class="syndicate-league">${escapeHtml(s.league)} &nbsp;•&nbsp; ${status}</div>
+            </div>
+            ${isAlpha
+              ? `<span class="badge-alpha">🔥 ALPHA SIGNAL</span>`
+              : `<span class="badge-neutral-syn">NEUTRAL</span>`
+            }
+          </div>
+
+          <div class="syndicate-metrics">
+            <div><div class="syn-m-label">Vig (ค่าน้ำโต๊ะ)</div><div class="syn-m-value" style="${isAlpha ? '' : 'color:#666;'}">${vig}%</div></div>
+            <div><div class="syn-m-label">Insider z (เงินโต๊ะใน)</div><div class="syn-m-value" style="${isAlpha ? '' : 'color:#666;'}">${z}%</div></div>
+            <div><div class="syn-m-label">xG Home (สด)</div><div class="syn-m-value" style="color:#60a5fa;">${homeXg}</div></div>
+            <div><div class="syn-m-label">xG Away (สด)</div><div class="syn-m-value" style="color:#f87171;">${awayXg}</div></div>
+          </div>
+
+          ${s.pinnacle_quoted_odds && s.pinnacle_quoted_odds.length >= 3 ? `
+            <div style="margin-top:8px;font-size:11px;color:#888;font-family:monospace;background:rgba(0,0,0,0.2);padding:4px 8px;border-radius:4px;">
+              📊 ราคาเปิด 1X2 Pinnacle: 
+              เจ้าบ้าน <strong>${s.pinnacle_quoted_odds[0].toFixed(2)}</strong> | 
+              เสมอ <strong>${s.pinnacle_quoted_odds[1].toFixed(2)}</strong> | 
+              เยือน <strong>${s.pinnacle_quoted_odds[2].toFixed(2)}</strong>
+            </div>
+          ` : ''}
+
+          ${isAlpha ? `
+            <div style="background:rgba(245,158,11,0.18);border:1.5px solid #f59e0b;border-radius:8px;padding:12px 14px;margin-top:12px;">
+              <div style="font-size:11px;color:#f59e0b;font-weight:800;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:4px;">
+                🎯 คำแนะนำการแทง (SYNDICATE PICK)
+              </div>
+              <div style="font-size:15px;font-weight:800;color:#fff;font-family:'JetBrains Mono',monospace;">
+                แทงฝั่ง: <span style="color:#fcd34d;background:rgba(245,158,11,0.25);padding:2px 8px;border-radius:4px;">${escapeHtml(s.recommended_market || '')}</span>
+              </div>
+              <div style="margin-top:6px;font-size:12px;color:#bbb;font-family:monospace;">
+                Edge (ความได้เปรียบ): <strong style="color:#34d399;">+${edge}%</strong> &nbsp;|&nbsp;
+                Kelly Stake: <strong style="color:#60a5fa;">${kelly}% ของทุน</strong>
+              </div>
+            </div>
+            <div class="syn-rationale" style="margin-top:8px;color:#aaa;">💡 <strong>เหตุผล:</strong> ${escapeHtml(s.rationale || '')}</div>
+          ` : `
+            <div style="margin-top:8px;padding:6px 10px;background:rgba(255,255,255,0.03);border-radius:6px;font-size:11px;color:#777;font-family:monospace;">
+              ⛔ <strong>สถานะ: ข้ามคู่นี้ (NO BET)</strong> — ตลาดตั้งราคาได้สมดุลแล้ว ไม่มีแต้มต่อทางคณิตศาสตร์
+            </div>
+          `}
+        </div>
+      `;
+    }).join('');
+
+  } catch (err) {
+    console.error('Syndicate load error:', err);
+    if (list) list.innerHTML = `<div style="text-align:center;color:#f87171;padding:36px 0;font-family:monospace;">Error: ${escapeHtml(err.message)}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⚡ REFRESH'; }
+  }
+}
+

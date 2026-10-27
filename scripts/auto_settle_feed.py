@@ -136,13 +136,17 @@ def settle_open_paper_bets(con: sqlite3.Connection) -> int:
     if not open_bets:
         return 0
 
-    finished_matches = cur.execute(
-        """
+    min_date = min((b[1][:10] for b in open_bets if b[1]), default="")
+    query = """
         SELECT kickoff_at, home_team, away_team, home_goals, away_goals, fav_side, ah_open, ou_line_open
         FROM matches
         WHERE home_goals IS NOT NULL AND away_goals IS NOT NULL
-        """
-    ).fetchall()
+    """
+    if min_date:
+        query += " AND kickoff_at >= ?"
+        finished_matches = cur.execute(query, (min_date,)).fetchall()
+    else:
+        finished_matches = cur.execute(query).fetchall()
 
     settled_cnt = 0
     now_str = datetime.now(timezone.utc).isoformat()
