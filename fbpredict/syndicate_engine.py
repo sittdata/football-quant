@@ -185,7 +185,7 @@ class SyndicateComboEngine:
         rationale = "Market priced efficiently."
 
         # Compute edge against market
-        if len(true_probs) >= 3:
+        if len(true_probs) >= 3 and len(quoted_odds) >= 3:
             p_home, p_draw, p_away = true_probs[0], true_probs[1], true_probs[2]
             
             # In-play Bayesian momentum adjustment
@@ -210,11 +210,11 @@ class SyndicateComboEngine:
                     rationale = f"Heavy sustained away attack momentum ({momentum_10m:+.1f}) from {away} against market consensus."
             else:
                 # Pre-match pure Shin edge
+                home_odd = quoted_odds[0] if len(quoted_odds) > 0 else 0.0
+                fair_odd = fair_odds[0] if len(fair_odds) > 0 else 0.0
                 if insider_z > 0.04 and p_home > 0.45:
-                    edge = 4.2
+                    edge = (p_home * home_odd - 1.0) * 100.0 if (home_odd > 0 and p_home > 0) else 0.0
                     verdict = "PREMATCH_SMART_MONEY"
-                    home_odd = quoted_odds[0] if len(quoted_odds) > 0 else 0.0
-                    fair_odd = fair_odds[0] if len(fair_odds) > 0 else 0.0
                     recommended_market = f"1X2 (ชนะเสมอแพ้) - เจ้าบ้าน {home} @ ราคาเปิด {home_odd:.2f} (ราคาแฟร์ {fair_odd:.2f})"
                     rationale = f"Pinnacle line heavily shaped by insider syndicate capital (Shin z = {insider_z*100:.1f}%)."
 

@@ -69,3 +69,83 @@ def test_get_player_dynamic_impact_from_db():
     assert impact["form_factor"] >= 1.0
     # Adjusted attack penalty should reflect high importance of in-form star
     assert impact["adj_attack_mult"] < 0.85
+
+
+def test_get_player_dynamic_impact_raw_tuple_rows():
+    """Test compatibility when connection row_factory is NOT sqlite3.Row (raw tuples)."""
+    import sqlite3
+    con = sqlite3.connect(":memory:")
+    cur = con.cursor()
+    cur.execute("""
+        CREATE TABLE player_match_stats (
+            player_name TEXT, team TEXT, match_date TEXT, position TEXT,
+            minutes INTEGER, is_starter INTEGER, xg REAL, xa REAL,
+            key_passes INTEGER, rating REAL
+        )
+    """)
+    cur.execute("""
+        INSERT INTO player_match_stats VALUES
+        ('Erling Haaland', 'Man City', '2026-10-01', 'FW', 90, 1, 1.2, 0.1, 2, 8.5)
+    """)
+    con.commit()
+
+    # Must not raise ValueError on dict(r) with raw tuples
+    impact = get_player_dynamic_impact(
+        con=con,
+        player_name="Erling Haaland",
+        team="Man City",
+        match_date="2026-10-10",
+        base_attack_mult=0.75,
+    )
+    assert impact["data_points"] == 1
+    assert impact["form_factor"] > 0
+
+
+def test_get_player_dynamic_impact_all_null_metrics():
+    """Verify NULL database metrics (xg=None, xa=None, rating=None) do not crash player form."""
+    import sqlite3
+    con = sqlite3.connect(":memory:")
+    cur = con.cursor()
+    cur.execute("""
+        CREATE TABLE player_match_stats (
+            player_name TEXT, team TEXT, match_date TEXT, position TEXT,
+            minutes INTEGER, is_starter INTEGER, xg REAL, xa REAL,
+            key_passes INTEGER, rating REAL
+        )
+    """)
+    cur.execute("""
+        INSERT INTO player_match_stats VALUES
+        ('Bukayo Saka', 'Arsenal', '2026-10-01', 'FW', 90, 1, NULL, NULL, NULL, NULL)
+    """)
+    con.commit()
+
+    impact = get_player_dynamic_impact(
+        con=con,
+        player_name="Bukayo Saka",
+        team="Arsenal",
+        match_date="2026-10-10",
+        base_attack_mult=0.80,
+    )
+    assert impact["data_points"] == 1
+    # All-NULL metrics must stay neutral, not collapse to the 0.60 worst-form floor.
+    assert impact["form_factor"] == 1.0
+    # starter_shock 0.20 (1 of 5 starts) * base penalty 0.20 -> adj 0.96
+    assert impact["adj_attack_mult"] == 0.96
+
+
+def test_positional_form_factor_all_null_metrics_neutral():
+    """A record set with no usable metric values is neutral (1.0), not worst form."""
+    l5 = [{"xg": None, "xa": None} for _ in range(5)]
+    season = [{"xg": None, "xa": None} for _ in range(20)]
+    assert compute_positional_form_factor(l5, season, position="FW") == 1.0
+
+    l5_mf = [{"key_passes": None} for _ in range(5)]
+    season_mf = [{"key_passes": None} for _ in range(20)]
+    assert compute_positional_form_factor(l5_mf, season_mf, position="MF") == 1.0
+
+
+def test_positional_form_factor_real_zero_still_worst_form():
+    """Genuine zero output (no NULLs) must still hit the 0.60 floor."""
+    l5 = [{"xg": 0.0, "xa": 0.0} for _ in range(5)]
+    season = [{"xg": 0.60, "xa": 0.20} for _ in range(20)]
+    assert compute_positional_form_factor(l5, season, position="FW") == 0.60

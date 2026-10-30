@@ -30,6 +30,7 @@ from fbpredict.feature_engine import HistoricalFeatureStore
 from fbpredict.quant_model import (
     MODEL_FEATURE_COLS,
     QuantModelBundle,
+    _class_one_probability,
     train_calibrated_models,
 )
 
@@ -60,30 +61,48 @@ def build_training_dataset():
     store = HistoricalFeatureStore(DB_PATH)
 
     rows = []
+    skipped: dict[str, int] = {}
     for _, r in df.iterrows():
+        # Pass raw quotes: the feature store must see the real absence of a
+        # price, not a substituted 1.95/3.30 that fabricates a market.
         feat = store.enrich_match(
             home_team=r["home_team"],
             away_team=r["away_team"],
             kickoff_iso=r["kickoff_at"],
             ah_open=r["ah_open"],
             ou_line_open=r["ou_line_open"],
-            ah_fav_price=r["ah_fav_price"] or 1.95,
-            ah_dog_price=r["ah_dog_price"] or 1.95,
-            ou_over_price=r["ou_over_price"] or 1.95,
-            ou_under_price=r["ou_under_price"] or 1.95,
-            draw_ft_odds=r["draw_ft_odds"] or 3.30,
+            ah_fav_price=r["ah_fav_price"],
+            ah_dog_price=r["ah_dog_price"],
+            ou_over_price=r["ou_over_price"],
+            ou_under_price=r["ou_under_price"],
+            draw_ft_odds=r["draw_ft_odds"],
             fav_side=r["fav_side"],
         )
 
         h_g = int(r["home_goals"])
         a_g = int(r["away_goals"])
         tot_g = h_g + a_g
-        fav_diff = (h_g - a_g) if r["fav_side"] == "home" else (a_g - h_g)
 
-        ah_unit = labels.ah_unit(fav_diff, r["ah_open"])
-        ou_unit = labels.ou_unit(tot_g, r["ou_line_open"], "over")
-        ah_bin = labels.ah_binary(fav_diff, r["ah_open"])
-        ou_bin = labels.ou_binary(tot_g, r["ou_line_open"], "over")
+        side = str(r["fav_side"]).strip().lower() if pd.notna(r["fav_side"]) else ""
+        if side not in ("home", "away"):
+            skipped["no_fav_side"] = skipped.get("no_fav_side", 0) + 1
+            continue
+        fav_diff = (h_g - a_g) if side == "home" else (a_g - h_g)
+
+        try:
+            ah_unit = labels.ah_unit(fav_diff, r["ah_open"])
+            ou_unit = labels.ou_unit(tot_g, r["ou_line_open"], "over")
+            ah_bin = labels.ah_binary(fav_diff, r["ah_open"])
+            ou_bin = labels.ou_binary(tot_g, r["ou_line_open"], "over")
+        except (ValueError, TypeError):
+            if pd.isna(r["ah_open"]):
+                reason = "no_ah_line"
+            elif pd.isna(r["ou_line_open"]):
+                reason = "no_ou_line"
+            else:
+                reason = "other_invalid_label"
+            skipped[reason] = skipped.get(reason, 0) + 1
+            continue
 
         feat["match_id"] = r["match_id"]
         feat["league"] = r["league"]
@@ -100,6 +119,12 @@ def build_training_dataset():
         feat["ah_label"] = ah_bin
         feat["ou_label"] = ou_bin
         rows.append(feat)
+
+    if skipped:
+        detail = ", ".join(f"{reason}={count}" for reason, count in sorted(skipped.items()))
+        print(f"⚠️ Skipped {sum(skipped.values())} rows before labeling: {detail}")
+    else:
+        print("✅ No rows skipped during labeling.")
 
     feat_df = pd.DataFrame(rows)
     # Only keep matches where both teams have sufficient history
@@ -134,11 +159,13 @@ def main():
 
     X_test_ah = test_df.loc[mask_test_ah, bundle.ah_feature_cols]
     y_test_ah = test_df.loc[mask_test_ah, "ah_label"].astype(int)
-    p_ah = bundle.ah_model.predict_proba(X_test_ah)[:, 1]
+    proba_ah = bundle.ah_model.predict_proba(X_test_ah)
+    p_ah = _class_one_probability(proba_ah, getattr(bundle.ah_model, "classes_", None))
 
     X_test_ou = test_df.loc[mask_test_ou, bundle.ou_feature_cols]
     y_test_ou = test_df.loc[mask_test_ou, "ou_label"].astype(int)
-    p_ou = bundle.ou_model.predict_proba(X_test_ou)[:, 1]
+    proba_ou = bundle.ou_model.predict_proba(X_test_ou)
+    p_ou = _class_one_probability(proba_ou, getattr(bundle.ou_model, "classes_", None))
 
     brier_ah = brier_score_loss(y_test_ah, p_ah)
     brier_ou = brier_score_loss(y_test_ou, p_ou)

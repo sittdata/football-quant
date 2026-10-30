@@ -12,6 +12,7 @@ Architecture:
 
 from __future__ import annotations
 
+import math
 import pickle
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -68,6 +69,23 @@ OU_FEATURE_COLS = [
 MODEL_FEATURE_COLS = list(dict.fromkeys(AH_FEATURE_COLS + OU_FEATURE_COLS))
 
 
+def _class_one_probability(proba: Any, classes: Any) -> np.ndarray:
+    """Return P(class == 1) per row, resolving the column via ``classes_``.
+
+    A model trained on a single class returns one column, and its label may be 0.
+    Indexing ``[:, 1]`` blind would raise or silently invert the probability.
+    """
+    arr = np.asarray(proba, dtype=float)
+    if arr.ndim != 2 or arr.shape[0] == 0:
+        return np.zeros(arr.shape[0] if arr.ndim == 2 else 0)
+    class_list = list(classes) if classes is not None else []
+    if 1 in class_list:
+        return arr[:, class_list.index(1)]
+    if arr.shape[1] > 1:
+        return arr[:, 1]
+    return np.zeros(arr.shape[0])
+
+
 @dataclass
 class QuantModelBundle:
     ah_model: Any
@@ -103,30 +121,90 @@ class QuantModelBundle:
         X_ah = row_df[self.ah_feature_cols]
         X_ou = row_df[self.ou_feature_cols]
 
-        p_fav = float(self.ah_model.predict_proba(X_ah)[0, 1])
+        ah_proba = self.ah_model.predict_proba(X_ah)
+        p_fav = float(_class_one_probability(ah_proba, getattr(self.ah_model, "classes_", None))[0])
         p_dog = 1.0 - p_fav
 
-        p_over = float(self.ou_model.predict_proba(X_ou)[0, 1])
+        ou_proba = self.ou_model.predict_proba(X_ou)
+        p_over = float(_class_one_probability(ou_proba, getattr(self.ou_model, "classes_", None))[0])
         p_under = 1.0 - p_over
 
-        fair_fav = features_dict.get("fair_fav_ah", 0.5)
-        fair_dog = features_dict.get("fair_dog_ah", 0.5)
-        fair_over = features_dict.get("fair_over", 0.5)
-        fair_under = features_dict.get("fair_under", 0.5)
+        def _safe_odds(val: Any) -> float | None:
+            """Return the quoted price, or None. Never invent a price."""
+            if val is None:
+                return None
+            try:
+                f = float(val)
+                return f if math.isfinite(f) and f > 1.0 else None
+            except (ValueError, TypeError):
+                return None
 
-        edge_fav = p_fav - fair_fav
-        edge_dog = p_dog - fair_dog
-        edge_over = p_over - fair_over
-        edge_under = p_under - fair_under
+        ah_fav_price = _safe_odds(features_dict.get("ah_fav_price"))
+        ah_dog_price = _safe_odds(features_dict.get("ah_dog_price"))
+        ou_over_price = _safe_odds(features_dict.get("ou_over_price"))
+        ou_under_price = _safe_odds(features_dict.get("ou_under_price"))
 
-        markets = [
-            ("AH_fav", edge_fav, p_fav, features_dict.get("ah_fav_price", 1.90)),
-            ("AH_dog", edge_dog, p_dog, features_dict.get("ah_dog_price", 1.90)),
-            ("OU_over", edge_over, p_over, features_dict.get("ou_over_price", 1.90)),
-            ("OU_under", edge_under, p_under, features_dict.get("ou_under_price", 1.90)),
-        ]
+        # Skip unpaired markets: both sides of a 2-way pair must be quoted.
+        # Computing an edge when only one side is quoted forces an invented neutral (0.5) fair prob.
+        ah_paired = (ah_fav_price is not None and ah_dog_price is not None)
+        ou_paired = (ou_over_price is not None and ou_under_price is not None)
 
-        best_mkt, best_edge, best_prob, best_odds = max(markets, key=lambda x: x[1])
+        def _safe_prob(val: Any) -> float | None:
+            if val is None:
+                return None
+            try:
+                f = float(val)
+                return f if math.isfinite(f) and 0.0 < f < 1.0 else None
+            except (ValueError, TypeError):
+                return None
+
+        fair_fav = _safe_prob(features_dict.get("fair_fav_ah")) if ah_paired else None
+        fair_dog = _safe_prob(features_dict.get("fair_dog_ah")) if ah_paired else None
+        if ah_paired and (fair_fav is None or fair_dog is None):
+            try:
+                fair_fav, fair_dog = labels.fair_two_way(ah_fav_price, ah_dog_price)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("Failed to recompute fair odds for AH pair (%s, %s): %s", ah_fav_price, ah_dog_price, e)
+                fair_fav, fair_dog = None, None
+
+        fair_over = _safe_prob(features_dict.get("fair_over")) if ou_paired else None
+        fair_under = _safe_prob(features_dict.get("fair_under")) if ou_paired else None
+        if ou_paired and (fair_over is None or fair_under is None):
+            try:
+                fair_over, fair_under = labels.fair_two_way(ou_over_price, ou_under_price)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("Failed to recompute fair odds for OU pair (%s, %s): %s", ou_over_price, ou_under_price, e)
+                fair_over, fair_under = None, None
+
+        edge_fav = (p_fav - fair_fav) if (ah_paired and fair_fav is not None) else None
+        edge_dog = (p_dog - fair_dog) if (ah_paired and fair_dog is not None) else None
+        edge_over = (p_over - fair_over) if (ou_paired and fair_over is not None) else None
+        edge_under = (p_under - fair_under) if (ou_paired and fair_under is not None) else None
+
+        priced = []
+        if ah_paired and edge_fav is not None and edge_dog is not None:
+            priced.append(("AH_fav", edge_fav, p_fav, ah_fav_price))
+            priced.append(("AH_dog", edge_dog, p_dog, ah_dog_price))
+
+        if ou_paired and edge_over is not None and edge_under is not None:
+            priced.append(("OU_over", edge_over, p_over, ou_over_price))
+            priced.append(("OU_under", edge_under, p_under, ou_under_price))
+
+        if not priced:
+            return {
+                "safe": False,
+                "reason": "No quoted odds available for any market",
+                "p_fav": round(p_fav, 4),
+                "p_dog": round(p_dog, 4),
+                "p_over": round(p_over, 4),
+                "p_under": round(p_under, 4),
+                "best_market": None,
+                "edge": 0.0,
+            }
+
+        best_mkt, best_edge, best_prob, best_odds = max(priced, key=lambda x: x[1])
 
         # Evaluate Steam & Smart Money Alignment
         from fbpredict.steam_engine import SteamSignal, analyze_market_steam, evaluate_steam_confirmation
@@ -154,10 +232,10 @@ class QuantModelBundle:
             "p_dog": round(p_dog, 4),
             "p_over": round(p_over, 4),
             "p_under": round(p_under, 4),
-            "edge_fav": round(edge_fav, 4),
-            "edge_dog": round(edge_dog, 4),
-            "edge_over": round(edge_over, 4),
-            "edge_under": round(edge_under, 4),
+            "edge_fav": round(edge_fav, 4) if edge_fav is not None else None,
+            "edge_dog": round(edge_dog, 4) if edge_dog is not None else None,
+            "edge_over": round(edge_over, 4) if edge_over is not None else None,
+            "edge_under": round(edge_under, 4) if edge_under is not None else None,
             "best_market": best_mkt,
             "best_edge": round(best_edge, 4),
             "best_prob": round(best_prob, 4),
@@ -190,15 +268,25 @@ class QuantModelBundle:
             if col not in d.columns:
                 d[col] = np.nan
 
-        p_fav = self.ah_model.predict_proba(d[self.ah_feature_cols])[:, 1]
+        ah_proba = self.ah_model.predict_proba(d[self.ah_feature_cols])
+        p_fav = _class_one_probability(ah_proba, getattr(self.ah_model, "classes_", None))
         p_dog = 1.0 - p_fav
-        p_over = self.ou_model.predict_proba(d[self.ou_feature_cols])[:, 1]
+        ou_proba = self.ou_model.predict_proba(d[self.ou_feature_cols])
+        p_over = _class_one_probability(ou_proba, getattr(self.ou_model, "classes_", None))
         p_under = 1.0 - p_over
 
-        fair_fav = d["fair_fav_ah"].values if "fair_fav_ah" in d.columns else np.full(len(d), 0.5)
-        fair_dog = d["fair_dog_ah"].values if "fair_dog_ah" in d.columns else np.full(len(d), 0.5)
-        fair_over = d["fair_over"].values if "fair_over" in d.columns else np.full(len(d), 0.5)
-        fair_under = d["fair_under"].values if "fair_under" in d.columns else np.full(len(d), 0.5)
+        def _fair_col(name: str) -> np.ndarray:
+            """Fair probability column, defaulting missing/NaN rows to a neutral 0.5."""
+            if name not in d.columns:
+                return np.full(len(d), 0.5)
+            values = pd.to_numeric(d[name], errors="coerce").to_numpy(dtype=float)
+            values = np.where(np.isfinite(values), values, 0.5)
+            return np.clip(values, 0.0, 1.0)
+
+        fair_fav = _fair_col("fair_fav_ah")
+        fair_dog = _fair_col("fair_dog_ah")
+        fair_over = _fair_col("fair_over")
+        fair_under = _fair_col("fair_under")
 
         edge_fav = p_fav - fair_fav
         edge_dog = p_dog - fair_dog

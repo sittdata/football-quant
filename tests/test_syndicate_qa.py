@@ -139,6 +139,32 @@ class TestSyndicateIntegration:
         assert "execution" in d
 
     @patch.object(PinnacleSharpFeed, "get_market_lines")
+    def test_triangulation_prematch_real_computed_edge(self, mock_lines):
+        """Pre-match edge must be calculated as (p*odds - 1)*100, not hardcoded 4.2."""
+        mock_lines.return_value = {
+            "moneyline": {
+                "raw_odds": [2.20, 3.40, 3.60],
+                "true_probs": [0.50, 0.25, 0.25],
+                "fair_odds": [2.00, 4.00, 4.00],
+                "shin_z": 0.05,
+                "vig_percent": 3.5
+            }
+        }
+        engine = SyndicateComboEngine()
+        pin_matchup = {
+            "id": 11111,
+            "home_team": "Real Madrid",
+            "away_team": "Barcelona",
+            "league": "La Liga",
+            "is_live": False
+        }
+        signal = engine.analyze_triangulation(pin_matchup, sofa_live_events=[])
+        assert signal is not None
+        assert signal.verdict == "PREMATCH_SMART_MONEY"
+        # 0.50 * 2.20 - 1.0 = 0.10 -> 10.0%
+        assert round(signal.edge_percent, 2) == 10.00
+
+    @patch.object(PinnacleSharpFeed, "get_market_lines")
     @patch.object(SofaScoreQuantFeed, "get_attack_momentum")
     @patch.object(SofaScoreQuantFeed, "get_shotmap_xg")
     def test_triangulation_inplay_momentum_boost(self, mock_shots, mock_momentum, mock_lines):

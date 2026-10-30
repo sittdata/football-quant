@@ -103,11 +103,25 @@ def simulate_match_scorelines(
     return scores
 
 
+def _quarter_credit(margin: float) -> float:
+    """Fraction of the stake won for a quarter-line margin (push counts as 0.5)."""
+    if margin > 0.25:
+        return 1.0
+    if margin == 0.25:
+        return 0.75
+    if margin == 0.0:
+        return 0.5
+    if margin == -0.25:
+        return 0.25
+    return 0.0
+
+
 def evaluate_fixture_monte_carlo(
     lambda_home: float,
     lambda_away: float,
     ah_line: float = -0.5,
     ou_line: float = 2.5,
+    fav_side: str = "home",
     n_sims: int = 10000,
     seed: int = 42,
 ) -> MonteCarloSimResult:
@@ -123,9 +137,14 @@ def evaluate_fixture_monte_carlo(
 
     score_counter = collections.Counter(scores)
 
-    # In AH: if ah_line is -0.5, fav cover requires home - away + ah_line > 0
+    side = str(fav_side).strip().lower() if fav_side is not None else ""
+    if side not in ("home", "away"):
+        raise ValueError(f"fav_side must be 'home' or 'away', got {fav_side!r}")
+    is_fav_home = side == "home"
+
     for h, a in scores:
         diff = h - a
+        fav_diff = diff if is_fav_home else -diff
         tot = h + a
 
         if diff > 0:
@@ -135,18 +154,13 @@ def evaluate_fixture_monte_carlo(
         else:
             away_wins += 1
 
-        # Asian Handicap payout logic
-        net_margin = diff + ah_line
-        if net_margin > 0.0:
-            fav_covers += 1.0
-        elif net_margin == 0.0:
-            fav_covers += 0.5  # Push/refund count as neutral
+        # Asian Handicap payout logic (quarter lines split the stake)
+        net_margin = round((fav_diff + ah_line) * 4.0) / 4.0
+        fav_covers += _quarter_credit(net_margin)
 
         # Over / Under
-        if tot > ou_line:
-            overs += 1.0
-        elif tot == ou_line:
-            overs += 0.5
+        ou_margin = round((tot - ou_line) * 4.0) / 4.0
+        overs += _quarter_credit(ou_margin)
 
     p_hw = home_wins / n_sims
     p_d = draws / n_sims

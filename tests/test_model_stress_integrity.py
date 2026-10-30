@@ -80,7 +80,18 @@ class TestModelIntegrityAndAxioms:
 
     def test_steam_engine_synergy_and_hard_clamps(self):
         """Verify that Kelly staking strictly obeys capital protection bounds."""
-        sig_confirmed = analyze_market_steam(open_ah=-0.75, current_ah=-0.50)
+        sig_confirmed = analyze_market_steam(
+            open_ah=-0.75,
+            current_ah=-0.50,
+            open_fav_price=1.95,
+            open_dog_price=1.95,
+            current_fav_price=1.95,
+            current_dog_price=1.95,
+            open_over_price=1.95,
+            open_under_price=1.95,
+            current_over_price=1.95,
+            current_under_price=1.95,
+        )
         # Confirmed underdog: base_stake=2.0 -> 2.0 * 1.25 = 2.5 (capped)
         res_boosted = compute_synergy_kelly(
             base_stake=2.0,
@@ -101,6 +112,18 @@ class TestModelIntegrityAndAxioms:
         )
         assert res_cut == 1.00
 
+        # Without prices (has_odds=False), line-delta steam must NOT scale stakes
+        sig_no_odds = analyze_market_steam(open_ah=-0.75, current_ah=-0.50)
+        assert sig_no_odds.has_odds is False
+        res_no_odds = compute_synergy_kelly(
+            base_stake=2.0,
+            market_pick="AH_dog",
+            steam_signal=sig_no_odds,
+            max_stake=2.50,
+            min_stake=0.50,
+        )
+        assert res_no_odds == 2.00
+
     def test_fixture_monte_carlo_evaluation_bounds(self):
         """Verify evaluate_fixture_monte_carlo returns proper bounded output."""
         res = evaluate_fixture_monte_carlo(
@@ -116,3 +139,160 @@ class TestModelIntegrityAndAxioms:
         assert math.isclose(res.home_win_prob + res.draw_prob + res.away_win_prob, 1.0, abs_tol=1e-3)
         assert res.fair_ah_fav_odds > 1.0
         assert len(res.top_scorelines) > 0
+
+    def test_feature_store_enrich_match_null_odds_and_handicaps(self):
+        """Verify feature engine does not raise TypeError when matches have NULL handicaps or odds."""
+        from fbpredict.feature_engine import HistoricalFeatureStore
+        fs = HistoricalFeatureStore(db_path=ROOT_DIR / "data" / "football.db")
+        feat = fs.enrich_match(
+            home_team="Arsenal",
+            away_team="Chelsea",
+            kickoff_iso="2026-10-30T15:00:00",
+            ah_open=None,
+            ou_line_open=None,
+            ah_fav_price=None,
+            ah_dog_price=None,
+            ou_over_price=None,
+            ou_under_price=None,
+            draw_ft_odds=None,
+            fav_side=None,
+        )
+        assert isinstance(feat, dict)
+        assert np.isnan(feat["ah_open"])
+        assert np.isnan(feat["ou_line_open"])
+        assert np.isnan(feat["total_x_ah"])
+        # Missing quotes must stay NaN, not be replaced by a fabricated 1.95 market.
+        assert np.isnan(feat["fair_fav_ah"])
+        assert np.isnan(feat["fair_dog_ah"])
+        assert np.isnan(feat["ah_overround"])
+        assert np.isnan(feat["fav_form"])
+        assert np.isnan(feat["is_fav_home"])
+
+    def test_quant_model_predict_match_none_odds_safe(self):
+        """Verify QuantModelBundle.predict_match does not crash on None/NaN fair probs and odds."""
+        from fbpredict.quant_model import QuantModelBundle, AH_FEATURE_COLS, OU_FEATURE_COLS
+        from sklearn.dummy import DummyClassifier
+
+        ah_mock = DummyClassifier(strategy="constant", constant=1).fit(
+            np.zeros((5, len(AH_FEATURE_COLS))), np.ones(5)
+        )
+        ou_mock = DummyClassifier(strategy="constant", constant=1).fit(
+            np.zeros((5, len(OU_FEATURE_COLS))), np.ones(5)
+        )
+        bundle = QuantModelBundle(ah_model=ah_mock, ou_model=ou_mock)
+
+        dummy_features = {col: 0.0 for col in AH_FEATURE_COLS}
+        dummy_features.update({col: 0.0 for col in OU_FEATURE_COLS})
+        dummy_features["has_sufficient_history"] = 1
+        dummy_features["fair_fav_ah"] = None
+        dummy_features["fair_dog_ah"] = None
+        dummy_features["fair_over"] = None
+        dummy_features["fair_under"] = None
+        dummy_features["ah_fav_price"] = None
+        dummy_features["ah_dog_price"] = None
+        dummy_features["ou_over_price"] = None
+        dummy_features["ou_under_price"] = None
+
+        pred = bundle.predict_match(dummy_features)
+        assert pred is not None
+        # No quoted price anywhere -> refuse to pick rather than invent 1.90.
+        assert pred["safe"] is False
+        assert pred["best_market"] is None
+        assert "No quoted odds" in pred["reason"]
+
+    def test_quant_model_predict_match_uses_only_quoted_prices(self):
+        """A pick may only be priced from a real quote, and single-class 0 must not read as 1."""
+        from fbpredict.quant_model import QuantModelBundle, AH_FEATURE_COLS, OU_FEATURE_COLS
+        from sklearn.dummy import DummyClassifier
+
+        # Constant class 0 everywhere: P(1) is 0, not 1 from column 0.
+        ah_mock = DummyClassifier(strategy="constant", constant=0).fit(
+            np.zeros((5, len(AH_FEATURE_COLS))), np.zeros(5)
+        )
+        ou_mock = DummyClassifier(strategy="constant", constant=1).fit(
+            np.zeros((5, len(OU_FEATURE_COLS))), np.ones(5)
+        )
+        bundle = QuantModelBundle(ah_model=ah_mock, ou_model=ou_mock)
+
+        dummy_features = {col: 0.0 for col in AH_FEATURE_COLS}
+        dummy_features.update({col: 0.0 for col in OU_FEATURE_COLS})
+        dummy_features["has_sufficient_history"] = 1
+        dummy_features["fair_fav_ah"] = 0.5
+        dummy_features["fair_dog_ah"] = 0.5
+        dummy_features["fair_over"] = 0.5
+        dummy_features["fair_under"] = 0.5
+        dummy_features["ah_fav_price"] = None
+        dummy_features["ah_dog_price"] = None
+        dummy_features["ou_over_price"] = 2.10
+        dummy_features["ou_under_price"] = 1.90
+
+        pred = bundle.predict_match(dummy_features)
+        assert pred["safe"] is True
+        assert pred["p_fav"] == 0.0
+        assert pred["best_market"] in ("OU_over", "OU_under")
+        # Quoted pair exists; best market picked from the real pair
+        assert pred["best_odds"] in (2.10, 1.90)
+
+    def test_quant_model_skips_unpaired_markets(self):
+        """When only one side of a pair is quoted, skip the market instead of inventing fair 0.5."""
+        from fbpredict.quant_model import QuantModelBundle, AH_FEATURE_COLS, OU_FEATURE_COLS
+        from sklearn.dummy import DummyClassifier
+
+        ah_mock = DummyClassifier(strategy="constant", constant=0).fit(
+            np.zeros((5, len(AH_FEATURE_COLS))), np.zeros(5)
+        )
+        ou_mock = DummyClassifier(strategy="constant", constant=1).fit(
+            np.zeros((5, len(OU_FEATURE_COLS))), np.ones(5)
+        )
+        bundle = QuantModelBundle(ah_model=ah_mock, ou_model=ou_mock)
+
+        dummy_features = {col: 0.0 for col in AH_FEATURE_COLS}
+        dummy_features.update({col: 0.0 for col in OU_FEATURE_COLS})
+        dummy_features["has_sufficient_history"] = 1
+        dummy_features["ah_fav_price"] = 1.95
+        dummy_features["ah_dog_price"] = None  # AH is unpaired
+        dummy_features["ou_over_price"] = 2.10
+        dummy_features["ou_under_price"] = None  # OU is unpaired
+
+        pred = bundle.predict_match(dummy_features)
+        # All available markets are unpaired -> refuse to price
+        assert pred["safe"] is False
+        assert pred["best_market"] is None
+
+    def test_paper_trading_candidate_filtering_none_edge(self):
+        """Paper trading candidate selection must never crash max(candidates) when some edges are None."""
+        # Simulated pred where AH is unpaired (edges are None) and OU is paired
+        pred = {
+            "safe": True,
+            "edge_fav": None,
+            "edge_dog": None,
+            "edge_over": 0.065,
+            "edge_under": -0.065,
+            "p_fav": 0.5,
+            "p_dog": 0.5,
+            "p_over": 0.55,
+            "p_under": 0.45,
+        }
+        # Simulate paper_trading candidate building
+        candidates = []
+        is_champ = False
+        side = "home"
+        ah_open = -0.5
+        ou_line = 2.5
+        ah_fav_price = 1.95
+        ah_dog_price = None
+        ou_over_price = 2.05
+        ou_under_price = 1.85
+
+        if side in ("home", "away") and ah_open is not None and ah_fav_price is not None and pred.get("edge_fav") is not None:
+            candidates.append(("AH_fav", pred["edge_fav"], pred["p_fav"], ah_fav_price))
+        if ou_line is not None and ou_over_price is not None and pred.get("edge_over") is not None:
+            candidates.append(("OU_over", pred["edge_over"], pred["p_over"], ou_over_price))
+        if ou_line is not None and ou_under_price is not None and pred.get("edge_under") is not None:
+            candidates.append(("OU_under", pred["edge_under"], pred["p_under"], ou_under_price))
+
+        assert len(candidates) == 2
+        # max must work cleanly without TypeError: '>' not supported between 'float' and 'NoneType'
+        best_mkt, best_edge, best_prob, best_odds = max(candidates, key=lambda x: x[1])
+        assert best_mkt == "OU_over"
+        assert best_edge == 0.065

@@ -13,6 +13,7 @@ to dynamically scale Poisson lambda penalties for match lineup simulations.
 from __future__ import annotations
 
 import logging
+import math
 import sqlite3
 from typing import Any, Dict, List, Optional
 
@@ -21,6 +22,36 @@ logger = logging.getLogger(__name__)
 # Strict safety bounds to prevent sample noise explosions
 MIN_FORM_FACTOR = 0.60
 MAX_FORM_FACTOR = 1.40
+
+
+def _safe_float(val: Any, default: float = 0.0) -> float:
+    if val is None:
+        return default
+    try:
+        f = float(val)
+        return f if math.isfinite(f) else default
+    except (ValueError, TypeError):
+        return default
+
+
+def _metric_means(records: List[Dict[str, Any]], keys: tuple[str, ...]) -> List[float]:
+    """Sum the given metric keys per record, skipping records where every key is missing."""
+    values = []
+    for r in records:
+        present = []
+        for key in keys:
+            raw = r.get(key)
+            if raw is None:
+                continue
+            try:
+                f = float(raw)
+            except (ValueError, TypeError):
+                continue
+            if math.isfinite(f):
+                present.append(f)
+        if present:
+            values.append(sum(present))
+    return values
 
 
 def compute_positional_form_factor(
@@ -36,20 +67,28 @@ def compute_positional_form_factor(
 
     if pos in ("FW", "ST", "F", "FORWARD"):
         # Metric: xG + xA
-        l5_val = sum(float(r.get("xg", 0.0)) + float(r.get("xa", 0.0)) for r in l5_records) / len(l5_records)
-        season_val = sum(float(r.get("xg", 0.0)) + float(r.get("xa", 0.0)) for r in season_records) / len(season_records)
+        l5_values = _metric_means(l5_records, ("xg", "xa"))
+        season_values = _metric_means(season_records, ("xg", "xa"))
+        if not l5_values or not season_values:
+            return 1.0
+        l5_val = sum(l5_values) / len(l5_values)
+        season_val = sum(season_values) / len(season_values)
         baseline = max(0.05, season_val)
         ratio = l5_val / baseline
     elif pos in ("MF", "M", "MIDFIELDER", "CAM", "CM", "CDM"):
         # Metric: Key Passes
-        l5_val = sum(float(r.get("key_passes", 0)) for r in l5_records) / len(l5_records)
-        season_val = sum(float(r.get("key_passes", 0)) for r in season_records) / len(season_records)
+        l5_values = _metric_means(l5_records, ("key_passes",))
+        season_values = _metric_means(season_records, ("key_passes",))
+        if not l5_values or not season_values:
+            return 1.0
+        l5_val = sum(l5_values) / len(l5_values)
+        season_val = sum(season_values) / len(season_values)
         baseline = max(0.5, season_val)
         ratio = l5_val / baseline
     else:
         # DF / GK: Match Rating
-        l5_val = sum(float(r.get("rating", 6.5)) for r in l5_records) / len(l5_records)
-        season_val = sum(float(r.get("rating", 6.5)) for r in season_records) / len(season_records)
+        l5_val = sum(_safe_float(r.get("rating"), 6.5) for r in l5_records) / len(l5_records)
+        season_val = sum(_safe_float(r.get("rating"), 6.5) for r in season_records) / len(season_records)
         baseline = max(5.0, season_val)
         ratio = l5_val / baseline
 
@@ -111,7 +150,13 @@ def get_player_dynamic_impact(
             "data_points": 0,
         }
 
-    records = [dict(r) for r in rows]
+    if hasattr(rows[0], "keys"):
+        records = [dict(r) for r in rows]
+    elif cur.description:
+        cols = [d[0] for d in cur.description]
+        records = [dict(zip(cols, r)) for r in rows]
+    else:
+        records = [dict(r) for r in rows]
     l5 = records[:5]
     season = records
 

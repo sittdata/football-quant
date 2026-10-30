@@ -183,6 +183,14 @@ def settle_open_paper_bets(con: sqlite3.Connection) -> int:
         a_g = int(a_g)
         score_str = f"{h_g}:{a_g}"
         tot_g = h_g + a_g
+        # No stored line/price -> cannot settle this market. Leave the bet OPEN.
+        if mkt in ("AH_fav", "AH_dog") and (ah_open is None or fav_side not in ("home", "away")):
+            print(f"[WARN] Skipping bet {bet_id}: missing AH line for matched fixture")
+            continue
+        if mkt in ("OU_over", "OU_under") and ou_line is None:
+            print(f"[WARN] Skipping bet {bet_id}: missing OU line for matched fixture")
+            continue
+
         fav_diff = (h_g - a_g) if fav_side == "home" else (a_g - h_g)
 
         ah_u = labels.ah_unit(fav_diff, ah_open)

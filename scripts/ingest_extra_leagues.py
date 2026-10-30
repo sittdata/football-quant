@@ -14,10 +14,12 @@ Seasons: 2023/24, 2024/25
 
 from __future__ import annotations
 
+import math
 import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 import numpy as np
 import pandas as pd
 
@@ -28,6 +30,16 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 DB_PATH = ROOT_DIR / "data" / "football.db"
+
+
+def safe_float(v: Any) -> float | None:
+    if v is None or pd.isna(v):
+        return None
+    try:
+        f = float(str(v).strip())
+        return f if math.isfinite(f) else None
+    except (ValueError, TypeError):
+        return None
 
 LEAGUES = [
     # Top 5 European Leagues & Championship
@@ -46,7 +58,7 @@ LEAGUES = [
     ("I2", "Italy Serie B"),
 ]
 
-SEASONS = ["2223", "2324", "2425"]
+SEASONS = ["2223", "2324", "2425", "2526", "2627"]
 
 
 def parse_kickoff(date_str: str, time_str: str | None = None) -> str:
@@ -95,54 +107,65 @@ def ingest_league(con: sqlite3.Connection, code: str, league_name: str, season_c
         match_id = f"fduk:{code}_{season_code}_{idx}"
 
         # Odds extraction
-        draw_odds = float(r["B365D"]) if pd.notna(r.get("B365D")) else 3.30
-        ou_line = 2.50
-        ou_over = float(r["B365>2.5"]) if pd.notna(r.get("B365>2.5")) else 1.95
-        ou_under = float(r["B365<2.5"]) if pd.notna(r.get("B365<2.5")) else 1.95
+        draw_odds = safe_float(r.get("B365D"))
+
+        ou_over = safe_float(r.get("B365>2.5"))
+        ou_under = safe_float(r.get("B365<2.5"))
+        has_ou = ou_over is not None and ou_under is not None
+        ou_line = 2.50 if has_ou else None
+        ou_line_close = 2.50 if has_ou else None
 
         # Asian Handicap Line (AHh is Home line)
-        ahh = float(r["AHh"]) if pd.notna(r.get("AHh")) else 0.0
-        b365_ahh = float(r["B365AHH"]) if pd.notna(r.get("B365AHH")) else 1.95
-        b365_aha = float(r["B365AHA"]) if pd.notna(r.get("B365AHA")) else 1.95
+        ahh = safe_float(r.get("AHh"))
+        b365_ahh = safe_float(r.get("B365AHH"))
+        b365_aha = safe_float(r.get("B365AHA"))
+        has_ah = ahh is not None and b365_ahh is not None and b365_aha is not None
 
-        if ahh < 0:
-            fav_side = "home"
-            ah_open = ahh
-            ah_fav_price = b365_ahh
-            ah_dog_price = b365_aha
-        elif ahh > 0:
-            fav_side = "away"
-            ah_open = -ahh  # Normalize favourite line to negative
-            ah_fav_price = b365_aha
-            ah_dog_price = b365_ahh
-        else:
-            # Level ball (0.0)
-            if b365_ahh <= b365_aha:
+        if has_ah:
+            if ahh < 0:
                 fav_side = "home"
-                ah_open = 0.0
+                ah_open = ahh
                 ah_fav_price = b365_ahh
                 ah_dog_price = b365_aha
-            else:
+            elif ahh > 0:
                 fav_side = "away"
-                ah_open = 0.0
+                ah_open = -ahh  # Normalize favourite line to negative
                 ah_fav_price = b365_aha
                 ah_dog_price = b365_ahh
+            else:
+                # Level ball (0.0)
+                if b365_ahh <= b365_aha:
+                    fav_side = "home"
+                    ah_open = 0.0
+                    ah_fav_price = b365_ahh
+                    ah_dog_price = b365_aha
+                else:
+                    fav_side = "away"
+                    ah_open = 0.0
+                    ah_fav_price = b365_aha
+                    ah_dog_price = b365_ahh
 
-        # Closing odds extraction
-        ahch = float(r["AHCh"]) if pd.notna(r.get("AHCh")) else ahh
-        c_ahh = float(r["B365CAHH"]) if pd.notna(r.get("B365CAHH")) else (float(r["PCAHH"]) if pd.notna(r.get("PCAHH")) else b365_ahh)
-        c_aha = float(r["B365CAHA"]) if pd.notna(r.get("B365CAHA")) else (float(r["PCAHA"]) if pd.notna(r.get("PCAHA")) else b365_aha)
+            # Closing odds extraction: store None when missing; never fabricate no-move close from open
+            ahch = safe_float(r.get("AHCh"))
+            c_ahh = safe_float(r.get("B365CAHH")) or safe_float(r.get("PCAHH"))
+            c_aha = safe_float(r.get("B365CAHA")) or safe_float(r.get("PCAHA"))
 
-        if fav_side == "home":
-            ah_close = ahch
-            pool_fav_close = c_ahh
-            pool_dog_close = c_aha
+            if fav_side == "home":
+                ah_close = ahch
+                pool_fav_close = c_ahh
+                pool_dog_close = c_aha
+            else:
+                ah_close = -ahch if ahch is not None else None
+                pool_fav_close = c_aha
+                pool_dog_close = c_ahh
         else:
-            ah_close = -ahch
-            pool_fav_close = c_aha
-            pool_dog_close = c_ahh
-
-        ou_line_close = 2.50
+            fav_side = None
+            ah_open = None
+            ah_fav_price = None
+            ah_dog_price = None
+            ah_close = None
+            pool_fav_close = None
+            pool_dog_close = None
 
         cur.execute(
             """

@@ -75,6 +75,14 @@ class TestSteamEngine(unittest.TestCase):
         sig_dog = analyze_market_steam(
             open_ah=-0.75,
             current_ah=-0.50,
+            open_fav_price=1.95,
+            open_dog_price=1.95,
+            current_fav_price=1.95,
+            current_dog_price=1.95,
+            open_over_price=1.95,
+            open_under_price=1.95,
+            current_over_price=1.95,
+            current_under_price=1.95,
         )
         # Model picks AH_dog and Steam is STEAM_DOG -> Confirmed!
         conf = evaluate_steam_confirmation("AH_dog", sig_dog)
@@ -87,6 +95,13 @@ class TestSteamEngine(unittest.TestCase):
         self.assertFalse(unconf["is_confirmed"])
         self.assertEqual(unconf["conviction_tier"], "TIER_2_MODEL_ONLY")
 
+        # Missing odds (has_odds=False): line delta alone must NOT confirm TIER_1
+        sig_no_odds = analyze_market_steam(open_ah=-0.75, current_ah=-0.50)
+        self.assertFalse(sig_no_odds.has_odds)
+        conf_no_odds = evaluate_steam_confirmation("AH_dog", sig_no_odds)
+        self.assertFalse(conf_no_odds["is_confirmed"])
+        self.assertEqual(conf_no_odds["conviction_tier"], "TIER_2_MODEL_ONLY")
+
     def test_safe_fallbacks_with_nans(self):
         sig = analyze_market_steam(
             open_ah=None,
@@ -95,26 +110,104 @@ class TestSteamEngine(unittest.TestCase):
             open_dog_price=None,
         )
         self.assertEqual(sig.ah_line_delta, 0.0)
+
+    def test_missing_live_odds_no_phantom_drift(self):
+        # Open odds exist with asymmetric market (1.50 vs 2.70), but live odds are missing (None)
+        sig = analyze_market_steam(
+            open_ah=-0.75,
+            current_ah=-0.75,
+            open_fav_price=1.50,
+            open_dog_price=2.70,
+            current_fav_price=None,
+            current_dog_price=None,
+        )
+        # Drift must be 0.0, NOT hallucinated +12%
+        self.assertAlmostEqual(sig.fav_prob_drift, 0.0)
+        self.assertAlmostEqual(sig.dog_prob_drift, 0.0)
+        self.assertFalse(sig.is_rlm)
+        self.assertEqual(sig.steam_direction, "NEUTRAL")
+
     def test_compute_synergy_kelly(self):
         from fbpredict.steam_engine import compute_synergy_kelly
         
-        # Test 1: Steam confirmed -> 1.25x scaling
-        sig_dog = analyze_market_steam(open_ah=-0.75, current_ah=-0.50)
+        # Test 1: Steam confirmed with valid quotes -> 1.25x scaling
+        sig_dog = analyze_market_steam(
+            open_ah=-0.75,
+            current_ah=-0.50,
+            open_fav_price=1.95,
+            open_dog_price=1.95,
+            current_fav_price=1.95,
+            current_dog_price=1.95,
+            open_over_price=1.95,
+            open_under_price=1.95,
+            current_over_price=1.95,
+            current_under_price=1.95,
+        )
         stake = compute_synergy_kelly(base_stake=1.0, market_pick="AH_dog", steam_signal=sig_dog)
         self.assertAlmostEqual(stake, 1.25)
         
-        # Test 2: Steam opposed -> 0.50x scaling
+        # Test 2: Steam opposed with valid quotes -> 0.50x scaling
         stake_opp = compute_synergy_kelly(base_stake=1.0, market_pick="AH_fav", steam_signal=sig_dog)
         self.assertAlmostEqual(stake_opp, 0.50)
         
         # Test 3: Neutral steam -> 1.0x scaling
-        sig_neutral = analyze_market_steam(open_ah=-0.50, current_ah=-0.50)
+        sig_neutral = analyze_market_steam(
+            open_ah=-0.50,
+            current_ah=-0.50,
+            open_fav_price=1.95,
+            open_dog_price=1.95,
+            current_fav_price=1.95,
+            current_dog_price=1.95,
+            open_over_price=1.95,
+            open_under_price=1.95,
+            current_over_price=1.95,
+            current_under_price=1.95,
+        )
         stake_neutral = compute_synergy_kelly(base_stake=1.0, market_pick="AH_dog", steam_signal=sig_neutral)
         self.assertAlmostEqual(stake_neutral, 1.00)
 
-        # Test 4: Clamping to max_stake=2.5
+        # Test 4: Missing odds (has_odds=False) -> Must NOT scale stakes (remains 1.00x)
+        sig_no_odds = analyze_market_steam(open_ah=-0.75, current_ah=-0.50)
+        self.assertFalse(sig_no_odds.has_odds)
+        stake_no_odds = compute_synergy_kelly(base_stake=1.0, market_pick="AH_dog", steam_signal=sig_no_odds)
+        self.assertAlmostEqual(stake_no_odds, 1.00)
+
+        # Test 5: Clamping to max_stake=2.5
         stake_max = compute_synergy_kelly(base_stake=2.2, market_pick="AH_dog", steam_signal=sig_dog)
         self.assertLessEqual(stake_max, 2.5)
+
+    def test_missing_prices_flagged_not_neutral(self):
+        """Absent prices must be surfaced as has_odds=False, not a quiet 0.0 drift."""
+        sig = analyze_market_steam(
+            open_ah=-0.50,
+            current_ah=-0.50,
+            open_fav_price=None,
+            open_dog_price=None,
+            current_fav_price=None,
+            current_dog_price=None,
+            open_over_price=None,
+            open_under_price=None,
+            current_over_price=None,
+            current_under_price=None,
+        )
+        self.assertFalse(sig.has_odds)
+        self.assertIn("Missing quoted prices", sig.description)
+        self.assertFalse(sig.to_dict()["has_odds"])
+
+    def test_valid_prices_flag_true(self):
+        sig = analyze_market_steam(
+            open_ah=-0.50,
+            current_ah=-0.50,
+            open_fav_price=1.95,
+            open_dog_price=1.95,
+            current_fav_price=1.95,
+            current_dog_price=1.95,
+            open_over_price=1.95,
+            open_under_price=1.95,
+            current_over_price=1.95,
+            current_under_price=1.95,
+        )
+        self.assertTrue(sig.has_odds)
 
 
 if __name__ == "__main__":

@@ -239,6 +239,10 @@ def fair_two_way_shin(odds_a: float, odds_b: float, tol: float = 1e-7, max_iter:
     q_b = 1.0 / float(odds_b)
     q_sum = q_a + q_b
 
+    if q_sum <= 1.0:
+        p_a, p_b = fair_two_way(odds_a, odds_b)
+        return p_a, p_b, 0.0
+
     z_low = 0.0
     z_high = 0.4
     z_mid = 0.0

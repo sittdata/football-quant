@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import os
 import sqlite3
 import sys
@@ -167,11 +168,11 @@ def scan_upcoming(min_edge: float = 0.04) -> None:
             kickoff_iso=kickoff,
             ah_open=r["ah_open"],
             ou_line_open=r["ou_line_open"],
-            ah_fav_price=r["ah_fav_price"] or 1.90,
-            ah_dog_price=r["ah_dog_price"] or 1.90,
-            ou_over_price=r["ou_over_price"] or 1.90,
-            ou_under_price=r["ou_under_price"] or 1.90,
-            draw_ft_odds=r["draw_ft_odds"] or 3.30,
+            ah_fav_price=r["ah_fav_price"],
+            ah_dog_price=r["ah_dog_price"],
+            ou_over_price=r["ou_over_price"],
+            ou_under_price=r["ou_under_price"],
+            draw_ft_odds=r["draw_ft_odds"],
             fav_side=r["fav_side"],
         )
 
@@ -180,21 +181,46 @@ def scan_upcoming(min_edge: float = 0.04) -> None:
         if not pred.get("safe"):
             continue
 
+        def _price(key: str) -> float | None:
+            """Quoted decimal price from the feature row, or None. Never invent one."""
+            val = feat.get(key)
+            try:
+                f = float(val)
+            except (TypeError, ValueError):
+                return None
+            return f if math.isfinite(f) and f > 1.0 else None
+
+        side = str(r["fav_side"]).strip().lower() if pd.notna(r["fav_side"]) else ""
+        ah_open = float(r["ah_open"]) if pd.notna(r["ah_open"]) else None
+        ou_line = float(r["ou_line_open"]) if pd.notna(r["ou_line_open"]) else None
+
+        candidates = []
         is_champ = "Championship" in league
         if is_champ:
             # Lower league (Championship): OU Over + Under + AH Favourite
-            candidates = [
-                ("OU_over", pred["edge_over"], pred["p_over"], feat.get("ou_over_price", 1.90)),
-                ("OU_under", pred["edge_under"], pred["p_under"], feat.get("ou_under_price", 1.90)),
-                ("AH_fav", pred["edge_fav"], pred["p_fav"], feat.get("ah_fav_price", 1.90)),
-            ]
+            if (
+                side in ("home", "away")
+                and ah_open is not None
+                and _price("ah_fav_price") is not None
+                and pred.get("edge_fav") is not None
+            ):
+                candidates.append(("AH_fav", pred["edge_fav"], pred["p_fav"], _price("ah_fav_price")))
         else:
             # Top 5 European leagues: Value in AH Underdog + OU
-            candidates = [
-                ("AH_dog", pred["edge_dog"], pred["p_dog"], feat.get("ah_dog_price", 1.90)),
-                ("OU_over", pred["edge_over"], pred["p_over"], feat.get("ou_over_price", 1.90)),
-                ("OU_under", pred["edge_under"], pred["p_under"], feat.get("ou_under_price", 1.90)),
-            ]
+            if (
+                side in ("home", "away")
+                and ah_open is not None
+                and _price("ah_dog_price") is not None
+                and pred.get("edge_dog") is not None
+            ):
+                candidates.append(("AH_dog", pred["edge_dog"], pred["p_dog"], _price("ah_dog_price")))
+        if ou_line is not None and _price("ou_over_price") is not None and pred.get("edge_over") is not None:
+            candidates.append(("OU_over", pred["edge_over"], pred["p_over"], _price("ou_over_price")))
+        if ou_line is not None and _price("ou_under_price") is not None and pred.get("edge_under") is not None:
+            candidates.append(("OU_under", pred["edge_under"], pred["p_under"], _price("ou_under_price")))
+
+        if not candidates:
+            continue
 
         best_mkt, best_edge, best_prob, best_odds = max(candidates, key=lambda x: x[1])
 
@@ -202,18 +228,18 @@ def scan_upcoming(min_edge: float = 0.04) -> None:
             continue
 
         # Pick Description formatting
-        ah_val = abs(float(r["ah_open"]))
-        fav_team = home if r["fav_side"] == "home" else away
-        dog_team = away if r["fav_side"] == "home" else home
+        ah_val = abs(ah_open) if ah_open is not None else None
+        fav_team = home if side == "home" else away
+        dog_team = away if side == "home" else home
 
-        if best_mkt == "AH_fav":
+        if best_mkt == "AH_fav" and ah_val is not None:
             pick_desc = f"ต่อ {fav_team} (-{ah_val:.2f})"
-        elif best_mkt == "AH_dog":
+        elif best_mkt == "AH_dog" and ah_val is not None:
             pick_desc = f"รอง {dog_team} (+{ah_val:.2f})"
         elif best_mkt == "OU_over":
-            pick_desc = f"สูง Over {r['ou_line_open']:.2f}"
+            pick_desc = f"สูง Over {ou_line:.2f}"
         else:
-            pick_desc = f"ต่ำ Under {r['ou_line_open']:.2f}"
+            pick_desc = f"ต่ำ Under {ou_line:.2f}"
 
         # Steam & RLM Alpha Flag
         if pred.get("is_steam_confirmed"):
@@ -321,6 +347,14 @@ def settle_open_bets() -> None:
         a_g = int(a_g)
         score_str = f"{h_g}:{a_g}"
         tot_g = h_g + a_g
+        # No stored line/price -> cannot settle this market. Leave the bet OPEN.
+        if mkt in ("AH_fav", "AH_dog") and (ah_open is None or fav_side not in ("home", "away")):
+            print(f"[WARN] Skipping bet {bet_id}: missing AH line for matched fixture")
+            continue
+        if mkt in ("OU_over", "OU_under") and ou_line is None:
+            print(f"[WARN] Skipping bet {bet_id}: missing OU line for matched fixture")
+            continue
+
         fav_diff = (h_g - a_g) if fav_side == "home" else (a_g - h_g)
 
         ah_u = labels.ah_unit(fav_diff, ah_open)

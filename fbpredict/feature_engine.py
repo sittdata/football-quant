@@ -10,6 +10,7 @@ Calculates strictly historical, leakage-free features from SQLite database:
 
 from __future__ import annotations
 
+import math
 import re
 import sqlite3
 from datetime import datetime, timezone
@@ -162,6 +163,21 @@ def _clean_odds(val: Any, default: float = 1.95) -> float:
         return default
 
 
+def _clean_price(val: Any) -> float | None:
+    """Return a usable decimal price, or None when no real quote exists.
+
+    Unlike ``_clean_odds`` this never invents a price: a missing quote must stay
+    missing so fair-odds/vig features become NaN instead of a fabricated market.
+    """
+    try:
+        if val is None or pd.isna(val):
+            return None
+        f = float(val)
+        return f if (np.isfinite(f) and f > 1.0) else None
+    except (TypeError, ValueError):
+        return None
+
+
 def normalize_team_name(raw: str) -> str:
     """Normalize team name by stripping HTML, common affixes, and applying dictionary."""
     if not raw:
@@ -292,12 +308,12 @@ class HistoricalFeatureStore:
         except Exception:
             target_dt = datetime.now(timezone.utc)
 
-        # Sanitize odds inputs
-        ah_fav_price = _clean_odds(ah_fav_price, 1.95)
-        ah_dog_price = _clean_odds(ah_dog_price, 1.95)
-        ou_over_price = _clean_odds(ou_over_price, 1.95)
-        ou_under_price = _clean_odds(ou_under_price, 1.95)
-        draw_ft_odds = _clean_odds(draw_ft_odds, 3.30)
+        # Sanitize odds inputs without inventing a price for missing quotes
+        ah_fav_price = _clean_price(ah_fav_price)
+        ah_dog_price = _clean_price(ah_dog_price)
+        ou_over_price = _clean_price(ou_over_price)
+        ou_under_price = _clean_price(ou_under_price)
+        draw_ft_odds = _clean_price(draw_ft_odds)
 
         h_hist = self.get_team_history(home_team, target_dt, window=window)
         a_hist = self.get_team_history(away_team, target_dt, window=window)
@@ -341,31 +357,62 @@ class HistoricalFeatureStore:
         rest_diff = h_rest - a_rest
 
         # 5. Favourite vs Underdog Relative Orientation
-        is_fav_home = 1 if str(fav_side).lower() == "home" else 0
-        fav_gf = h_gf if is_fav_home else a_gf
-        fav_ga = h_ga if is_fav_home else a_ga
-        dog_gf = a_gf if is_fav_home else h_gf
-        dog_ga = a_ga if is_fav_home else h_ga
+        side_norm = str(fav_side).strip().lower() if fav_side is not None else ""
+        if side_norm == "home":
+            is_fav_home: int | None = 1
+        elif side_norm == "away":
+            is_fav_home = 0
+        else:
+            is_fav_home = None
 
-        fav_form = (fav_gf - fav_ga) if (pd.notna(fav_gf) and pd.notna(fav_ga)) else np.nan
-        dog_form = (dog_gf - dog_ga) if (pd.notna(dog_gf) and pd.notna(dog_ga)) else np.nan
-        fav_dog_form_diff = (fav_form - dog_form) if (pd.notna(fav_form) and pd.notna(dog_form)) else np.nan
+        if is_fav_home is None:
+            fav_gf = fav_ga = dog_gf = dog_ga = np.nan
+            fav_form = dog_form = fav_dog_form_diff = np.nan
+            fav_rest = dog_rest = np.nan
+            fav_rest_diff = np.nan
+            fav_over_rate = dog_over_rate = np.nan
+        else:
+            fav_gf = h_gf if is_fav_home else a_gf
+            fav_ga = h_ga if is_fav_home else a_ga
+            dog_gf = a_gf if is_fav_home else h_gf
+            dog_ga = a_ga if is_fav_home else h_ga
 
-        fav_rest = h_rest if is_fav_home else a_rest
-        dog_rest = a_rest if is_fav_home else h_rest
-        fav_rest_diff = fav_rest - dog_rest
+            fav_form = (fav_gf - fav_ga) if (pd.notna(fav_gf) and pd.notna(fav_ga)) else np.nan
+            dog_form = (dog_gf - dog_ga) if (pd.notna(dog_gf) and pd.notna(dog_ga)) else np.nan
+            fav_dog_form_diff = (fav_form - dog_form) if (pd.notna(fav_form) and pd.notna(dog_form)) else np.nan
 
-        fav_over_rate = h_over_rate if is_fav_home else a_over_rate
-        dog_over_rate = a_over_rate if is_fav_home else h_over_rate
+            fav_rest = h_rest if is_fav_home else a_rest
+            dog_rest = a_rest if is_fav_home else h_rest
+            fav_rest_diff = fav_rest - dog_rest
+
+            fav_over_rate = h_over_rate if is_fav_home else a_over_rate
+            dog_over_rate = a_over_rate if is_fav_home else h_over_rate
 
         # 6. Fair Odds & Market Overround (Vig-free)
-        fair_fav, fair_dog = labels.fair_two_way(ah_fav_price, ah_dog_price)
-        fair_over, fair_under = labels.fair_two_way(ou_over_price, ou_under_price)
-        ah_overround = (1.0 / ah_fav_price + 1.0 / ah_dog_price) - 1.0
-        ou_overround = (1.0 / ou_over_price + 1.0 / ou_under_price) - 1.0
+        if (
+            ah_fav_price is not None and ah_dog_price is not None
+            and pd.notna(ah_fav_price) and pd.notna(ah_dog_price)
+            and float(ah_fav_price) > 1.0 and float(ah_dog_price) > 1.0
+        ):
+            fair_fav, fair_dog = labels.fair_two_way(ah_fav_price, ah_dog_price)
+            ah_overround = (1.0 / float(ah_fav_price) + 1.0 / float(ah_dog_price)) - 1.0
+        else:
+            fair_fav, fair_dog = np.nan, np.nan
+            ah_overround = np.nan
 
-        ah_abs = abs(float(ah_open))
-        total_x_ah = float(ou_line_open) * ah_abs
+        if (
+            ou_over_price is not None and ou_under_price is not None
+            and pd.notna(ou_over_price) and pd.notna(ou_under_price)
+            and float(ou_over_price) > 1.0 and float(ou_under_price) > 1.0
+        ):
+            fair_over, fair_under = labels.fair_two_way(ou_over_price, ou_under_price)
+            ou_overround = (1.0 / float(ou_over_price) + 1.0 / float(ou_under_price)) - 1.0
+        else:
+            fair_over, fair_under = np.nan, np.nan
+            ou_overround = np.nan
+
+        ah_abs = abs(float(ah_open)) if (ah_open is not None and pd.notna(ah_open)) else np.nan
+        total_x_ah = (float(ou_line_open) * ah_abs) if (ou_line_open is not None and pd.notna(ou_line_open) and pd.notna(ah_abs)) else np.nan
 
         # 7. Steam & Market Line Movement
         steam_sig = analyze_market_steam(
@@ -383,28 +430,37 @@ class HistoricalFeatureStore:
             current_under_price=ou_under_close_price or ou_under_price,
         )
 
+        def _f(val: Any) -> float:
+            if val is None:
+                return np.nan
+            try:
+                f = float(val)
+                return f if math.isfinite(f) else np.nan
+            except (ValueError, TypeError):
+                return np.nan
+
         return {
             "has_sufficient_history": int(has_sufficient),
             "home_sample_size": h_n,
             "away_sample_size": a_n,
             "fav_side": fav_side,
-            "is_fav_home": is_fav_home,
+            "is_fav_home": is_fav_home if is_fav_home is not None else np.nan,
             # Market odds
-            "ah_open": float(ah_open),
+            "ah_open": _f(ah_open),
             "ah_abs": ah_abs,
-            "ah_fav_price": float(ah_fav_price),
-            "ah_dog_price": float(ah_dog_price),
+            "ah_fav_price": _f(ah_fav_price),
+            "ah_dog_price": _f(ah_dog_price),
             "fair_fav_ah": fair_fav,
             "fair_dog_ah": fair_dog,
             "ah_overround": ah_overround,
-            "ou_line_open": float(ou_line_open),
-            "ou_over_price": float(ou_over_price),
-            "ou_under_price": float(ou_under_price),
+            "ou_line_open": _f(ou_line_open),
+            "ou_over_price": _f(ou_over_price),
+            "ou_under_price": _f(ou_under_price),
             "fair_over": fair_over,
             "fair_under": fair_under,
             "ou_overround": ou_overround,
             "total_x_ah": total_x_ah,
-            "draw_ft_odds": float(draw_ft_odds),
+            "draw_ft_odds": _f(draw_ft_odds),
             # Rolling performance (Home/Away for OU)
             "home_gf_avg": h_gf,
             "home_ga_avg": h_ga,

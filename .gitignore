@@ -26,6 +26,10 @@ DSA.pdf
 screen.png
 *.png
 
+# scraped / unpacked artifacts (may contain session ids and tokens)
+site_dump.html
+script_*_unpacked.js
+
 # python
 __pycache__/
 *.py[cod]

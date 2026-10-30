@@ -49,6 +49,9 @@ class SteamSignal:
     is_rlm: bool  # True if Reverse Line Movement detected
     steam_strength: float  # Normalized 0.0 to 1.0 confidence score
     description: str
+    # False when quoted prices were missing and drifts defaulted to 0.0.
+    # A "quiet market" NEUTRAL with has_odds=False means "unknown", not "no move".
+    has_odds: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -66,6 +69,7 @@ class SteamSignal:
             "is_rlm": self.is_rlm,
             "steam_strength": round(self.steam_strength, 2),
             "description": self.description,
+            "has_odds": self.has_odds,
         }
 
 
@@ -77,16 +81,14 @@ def calculate_ah_drift(
 ) -> tuple[float, float]:
     """Calculate margin-stripped probability drift for Asian Handicap."""
     try:
-        f_open_fav, f_open_dog = (
-            labels.fair_two_way(open_fav_odds, open_dog_odds)
-            if (open_fav_odds and open_dog_odds and open_fav_odds > 1.0 and open_dog_odds > 1.0)
-            else (0.5, 0.5)
-        )
-        f_cur_fav, f_cur_dog = (
-            labels.fair_two_way(current_fav_odds, current_dog_odds)
-            if (current_fav_odds and current_dog_odds and current_fav_odds > 1.0 and current_dog_odds > 1.0)
-            else (0.5, 0.5)
-        )
+        if not (
+            open_fav_odds and open_dog_odds and open_fav_odds > 1.0 and open_dog_odds > 1.0
+            and current_fav_odds and current_dog_odds and current_fav_odds > 1.0 and current_dog_odds > 1.0
+        ):
+            return 0.0, 0.0
+
+        f_open_fav, f_open_dog = labels.fair_two_way(open_fav_odds, open_dog_odds)
+        f_cur_fav, f_cur_dog = labels.fair_two_way(current_fav_odds, current_dog_odds)
         return (f_cur_fav - f_open_fav), (f_cur_dog - f_open_dog)
     except Exception:
         return 0.0, 0.0
@@ -100,16 +102,14 @@ def calculate_ou_drift(
 ) -> tuple[float, float]:
     """Calculate margin-stripped probability drift for Over/Under."""
     try:
-        f_open_over, f_open_under = (
-            labels.fair_two_way(open_over_odds, open_under_odds)
-            if (open_over_odds and open_under_odds and open_over_odds > 1.0 and open_under_odds > 1.0)
-            else (0.5, 0.5)
-        )
-        f_cur_over, f_cur_under = (
-            labels.fair_two_way(current_over_odds, current_under_odds)
-            if (current_over_odds and current_under_odds and current_over_odds > 1.0 and current_under_odds > 1.0)
-            else (0.5, 0.5)
-        )
+        if not (
+            open_over_odds and open_under_odds and open_over_odds > 1.0 and open_under_odds > 1.0
+            and current_over_odds and current_under_odds and current_over_odds > 1.0 and current_under_odds > 1.0
+        ):
+            return 0.0, 0.0
+
+        f_open_over, f_open_under = labels.fair_two_way(open_over_odds, open_under_odds)
+        f_cur_over, f_cur_under = labels.fair_two_way(current_over_odds, current_under_odds)
         return (f_cur_over - f_open_over), (f_cur_under - f_open_under)
     except Exception:
         return 0.0, 0.0
@@ -118,16 +118,16 @@ def calculate_ou_drift(
 def analyze_market_steam(
     open_ah: float | None = None,
     current_ah: float | None = None,
-    open_fav_price: float | None = 1.95,
-    open_dog_price: float | None = 1.95,
-    current_fav_price: float | None = 1.95,
-    current_dog_price: float | None = 1.95,
+    open_fav_price: float | None = None,
+    open_dog_price: float | None = None,
+    current_fav_price: float | None = None,
+    current_dog_price: float | None = None,
     open_ou: float | None = 2.5,
     current_ou: float | None = 2.5,
-    open_over_price: float | None = 1.95,
-    open_under_price: float | None = 1.95,
-    current_over_price: float | None = 1.95,
-    current_under_price: float | None = 1.95,
+    open_over_price: float | None = None,
+    open_under_price: float | None = None,
+    current_over_price: float | None = None,
+    current_under_price: float | None = None,
     drift_threshold: float = 0.025,  # 2.5% vig-free implied probability shift
 ) -> SteamSignal:
     """Analyze price movement and classify steam / smart money velocity."""
@@ -139,6 +139,19 @@ def analyze_market_steam(
     # 1. Line Deltas
     ah_line_delta = (cu_ah - op_ah) if (cu_ah is not None and op_ah is not None) else 0.0
     ou_line_delta = (cu_ou - op_ou) if (cu_ou is not None and op_ou is not None) else 0.0
+
+    def _valid_pair(a: float | None, b: float | None) -> bool:
+        return a is not None and b is not None and a > 1.0 and b > 1.0
+
+    # Drift defaults to 0.0 when prices are missing, so track whether the
+    # inputs were actually available: a 0.0 drift from no data is not "no move".
+    ah_odds_available = _valid_pair(_safe_float(open_fav_price), _safe_float(open_dog_price)) and _valid_pair(
+        _safe_float(current_fav_price), _safe_float(current_dog_price)
+    )
+    ou_odds_available = _valid_pair(_safe_float(open_over_price), _safe_float(open_under_price)) and _valid_pair(
+        _safe_float(current_over_price), _safe_float(current_under_price)
+    )
+    has_odds = ah_odds_available and ou_odds_available
 
     # 2. Probability Drifts
     fav_drift, dog_drift = calculate_ah_drift(
@@ -191,6 +204,9 @@ def analyze_market_steam(
         if is_rlm and steam_direction == "STEAM_DOG":
             desc = "⚡ Reverse Line Movement! " + desc
 
+    if not has_odds:
+        desc = "⚠ Missing quoted prices (drift unknown). " + desc
+
     return SteamSignal(
         open_ah=op_ah,
         current_ah=cu_ah,
@@ -206,6 +222,7 @@ def analyze_market_steam(
         is_rlm=is_rlm,
         steam_strength=strength,
         description=desc,
+        has_odds=has_odds,
     )
 
 
@@ -223,14 +240,15 @@ def evaluate_steam_confirmation(
     s_dir = steam_signal.steam_direction
 
     is_confirmed = False
-    if mkt == "AH_dog" and s_dir == "STEAM_DOG":
-        is_confirmed = True
-    elif mkt == "AH_fav" and s_dir == "STEAM_FAV":
-        is_confirmed = True
-    elif mkt == "OU_over" and s_dir == "STEAM_OVER":
-        is_confirmed = True
-    elif mkt == "OU_under" and s_dir == "STEAM_UNDER":
-        is_confirmed = True
+    if getattr(steam_signal, "has_odds", False):
+        if mkt == "AH_dog" and s_dir == "STEAM_DOG":
+            is_confirmed = True
+        elif mkt == "AH_fav" and s_dir == "STEAM_FAV":
+            is_confirmed = True
+        elif mkt == "OU_over" and s_dir == "STEAM_OVER":
+            is_confirmed = True
+        elif mkt == "OU_under" and s_dir == "STEAM_UNDER":
+            is_confirmed = True
 
     tier = "TIER_1_STEAM_CONFIRMED" if is_confirmed else "TIER_2_MODEL_ONLY"
 
@@ -249,7 +267,7 @@ def compute_synergy_kelly(
     base_stake: float,
     market_pick: str,
     steam_signal: SteamSignal | None,
-    min_stake: float = 0.5,
+    min_stake: float = 0.0,
     max_stake: float = 2.5,
 ) -> float:
     """Dynamically scales Kelly staking according to Sharp Money steam alignment.
@@ -260,7 +278,11 @@ def compute_synergy_kelly(
     """
     if base_stake is None or base_stake <= 0:
         return 0.0
-    if steam_signal is None or steam_signal.steam_direction == "NEUTRAL":
+    if (
+        steam_signal is None
+        or steam_signal.steam_direction == "NEUTRAL"
+        or not getattr(steam_signal, "has_odds", False)
+    ):
         return round(float(max(min_stake, min(max_stake, base_stake))), 2)
 
     mkt = str(market_pick).strip()

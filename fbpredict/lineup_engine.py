@@ -201,6 +201,7 @@ def evaluate_match_with_lineups(
     away_absences: List[str | Dict[str, Any]],
     ah_line: float = -0.5,
     ou_line: float = 2.5,
+    fav_side: str = "home",
     n_sims: int = 10000,
     seed: int = 42,
     match_date: Optional[str] = None,
@@ -215,6 +216,7 @@ def evaluate_match_with_lineups(
         lambda_away=base_lambda_away,
         ah_line=ah_line,
         ou_line=ou_line,
+        fav_side=fav_side,
         n_sims=n_sims,
         seed=seed,
     )
@@ -236,6 +238,7 @@ def evaluate_match_with_lineups(
         lambda_away=adj_la,
         ah_line=ah_line,
         ou_line=ou_line,
+        fav_side=fav_side,
         n_sims=n_sims,
         seed=seed,
     )
