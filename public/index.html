@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Football Match Outcome Predictor | XGBoost AI</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0fdf4',
+              500: '#22c55e',
+              600: '#16a34a',
+              700: '#15803d'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col antialiased selection:bg-emerald-500 selection:text-white">
+
+  <!-- Navbar -->
+  <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/20 text-xl font-bold">
+          ⚽
+        </div>
+        <div>
+          <span class="font-extrabold text-lg tracking-tight bg-gradient-to-r from-white via-slate-100 to-slate-400 bg-clip-text text-transparent">
+            KickPredict AI
+          </span>
+          <span class="text-xs px-2 py-0.5 ml-2 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono">
+            XGBoost v2.0
+          </span>
+        </div>
+      </div>
+      <div class="flex items-center space-x-4 text-sm text-slate-400">
+        <span class="hidden sm:inline-block"><span class="w-2 h-2 rounded-full bg-emerald-400 inline-block mr-1.5 animate-pulse"></span>5,524 Matches Trained</span>
+        <a href="#about" class="hover:text-emerald-400 transition-colors">Methodology</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero Header -->
+  <main class="flex-1 max-w-5xl mx-auto px-4 py-8 w-full space-y-8">
+    <div class="text-center max-w-2xl mx-auto space-y-3">
+      <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700/60 text-xs text-slate-300">
+        <span>⚡ Deep Statistical Modelling</span>
+        <span class="text-slate-500">•</span>
+        <span class="text-emerald-400 font-medium">Understat xG + Market Odds</span>
+      </div>
+      <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
+        Football Match Outcome Predictor
+      </h1>
+      <p class="text-slate-400 text-sm sm:text-base">
+        Predict match probabilities using calibrated Machine Learning on 5-match rolling Expected Goals (xG) and Asian Handicap price pools.
+      </p>
+    </div>
+
+    <!-- Match Configuration Card -->
+    <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-6 shadow-xl space-y-6">
+      <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-4 border-b border-slate-800 gap-4">
+        <div>
+          <h2 class="text-lg font-bold text-white flex items-center space-x-2">
+            <span>⚔️ Match Fixture Setup</span>
+          </h2>
+          <p class="text-xs text-slate-400">Select teams from Top 5 European Leagues or customize metrics</p>
+        </div>
+        <div class="flex items-center space-x-2">
+          <label class="text-xs text-slate-400">League Filter:</label>
+          <select id="leagueFilter" class="bg-slate-800 border border-slate-700 text-xs rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-emerald-500">
+            <option value="ALL">All 5 Leagues (133 Teams)</option>
+            <option value="Premier League (England)">Premier League (EPL)</option>
+            <option value="La Liga (Spain)">La Liga</option>
+            <option value="Serie A (Italy)">Serie A</option>
+            <option value="Bundesliga (Germany)">Bundesliga</option>
+            <option value="Ligue 1 (France)">Ligue 1</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Teams Grid -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 relative">
+        <!-- VS Badge in middle for desktop -->
+        <div class="hidden md:flex absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-slate-800 border border-slate-700 text-slate-400 text-xs font-bold items-center justify-center shadow-lg z-10">
+          VS
+        </div>
+
+        <!-- Home Team Column -->
+        <div class="bg-slate-950/60 border border-slate-800/70 rounded-xl p-5 space-y-4">
+          <div class="flex items-center justify-between">
+            <span class="text-xs uppercase tracking-wider font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">Home Team (เจ้าบ้าน)</span>
+            <span id="homeLeagueBadge" class="text-xs text-slate-500">Premier League</span>
+          </div>
+
+          <div>
+            <label class="block text-xs text-slate-400 mb-1.5 font-medium">Select Team</label>
+            <select id="homeTeamSelect" class="w-full bg-slate-900 border border-slate-700 text-sm rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500">
+              <!-- populated dynamically -->
+            </select>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3 pt-2">
+            <div>
+              <label class="block text-[11px] text-slate-400 mb-1 flex items-center justify-between">
+                <span>Avg xG (Attack)</span>
+                <span id="homeXgVal" class="text-emerald-400 font-mono font-bold">1.75</span>
+              </label>
+              <input type="number" step="0.05" min="0.1" max="4.0" id="homeXgInput" value="1.75" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:border-emerald-500">
+            </div>
+            <div>
+              <label class="block text-[11px] text-slate-400 mb-1 flex items-center justify-between">
+                <span>Avg xGA (Defense)</span>
+                <span id="homeXgaVal" class="text-amber-400 font-mono font-bold">1.37</span>
+              </label>
+              <input type="number" step="0.05" min="0.1" max="4.0" id="homeXgaInput" value="1.37" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:border-emerald-500">
+            </div>
+          </div>
+        </div>
+
+        <!-- Away Team Column -->
+        <div class="bg-slate-950/60 border border-slate-800/70 rounded-xl p-5 space-y-4">
+          <div class="flex items-center justify-between">
+            <span class="text-xs uppercase tracking-wider font-semibold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded">Away Team (ทีมเยือน)</span>
+            <span id="awayLeagueBadge" class="text-xs text-slate-500">Premier League</span>
+          </div>
+
+          <div>
+            <label class="block text-xs text-slate-400 mb-1.5 font-medium">Select Team</label>
+            <select id="awayTeamSelect" class="w-full bg-slate-900 border border-slate-700 text-sm rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-rose-500/50 focus:border-rose-500">
+              <!-- populated dynamically -->
+            </select>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3 pt-2">
+            <div>
+              <label class="block text-[11px] text-slate-400 mb-1 flex items-center justify-between">
+                <span>Avg xG (Attack)</span>
+                <span id="awayXgVal" class="text-emerald-400 font-mono font-bold">1.17</span>
+              </label>
+              <input type="number" step="0.05" min="0.1" max="4.0" id="awayXgInput" value="1.17" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:border-emerald-500">
+            </div>
+            <div>
+              <label class="block text-[11px] text-slate-400 mb-1 flex items-center justify-between">
+                <span>Avg xGA (Defense)</span>
+                <span id="awayXgaVal" class="text-amber-400 font-mono font-bold">1.77</span>
+              </label>
+              <input type="number" step="0.05" min="0.1" max="4.0" id="awayXgaInput" value="1.77" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:border-emerald-500">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Market Odds & Handicap Row -->
+      <div class="bg-slate-950/40 border border-slate-800/80 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs text-slate-300 font-medium mb-1 flex justify-between">
+            <span>Asian Handicap Line (ราคาต่อรอง)</span>
+            <span id="handicapDisplay" class="font-mono text-emerald-400 font-bold">-0.50</span>
+          </label>
+          <div class="flex items-center space-x-2">
+            <input type="range" id="handicapSlider" min="-2.5" max="2.5" step="0.25" value="-0.5" class="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500">
+            <span class="text-xs text-slate-400 w-12 text-right font-mono" id="handicapLabel">-0.50</span>
+          </div>
+          <p class="text-[11px] text-slate-500 mt-1">Negative = Home is Favorite, Positive = Away is Favorite</p>
+        </div>
+
+        <div>
+          <label class="block text-xs text-slate-300 font-medium mb-1 flex justify-between">
+            <span>Market Odds Price (ค่าน้ำทีมต่อ Bet365)</span>
+            <span id="oddsDisplay" class="font-mono text-emerald-400 font-bold">1.95</span>
+          </label>
+          <div class="flex items-center space-x-2">
+            <input type="range" id="oddsSlider" min="1.50" max="2.30" step="0.01" value="1.95" class="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500">
+            <span class="text-xs text-slate-400 w-12 text-right font-mono" id="oddsLabel">1.95</span>
+          </div>
+          <p class="text-[11px] text-slate-500 mt-1">Standard decimal price around 1.90 - 2.05</p>
+        </div>
+      </div>
+
+      <!-- Submit Button -->
+      <button id="predictBtn" class="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white font-bold text-base shadow-lg shadow-emerald-500/25 transition-all transform active:scale-[0.99] flex items-center justify-center space-x-2">
+        <span>⚡ Calculate Match Outcome Probabilities</span>
+      </button>
+    </div>
+
+    <!-- Prediction Results Section -->
+    <div id="resultsCard" class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-6 shadow-xl space-y-6">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-800 gap-2">
+        <div>
+          <h2 class="text-lg font-bold text-white flex items-center space-x-2">
+            <span>📊 Prediction Outcome</span>
+          </h2>
+          <p class="text-xs text-slate-400">Calculated via 300 Decision Trees across 3 outcome classes</p>
+        </div>
+        <div id="winnerBadge" class="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+          Home Win Predicted
+        </div>
+      </div>
+
+      <!-- Multi-segmented Probability Bar -->
+      <div class="space-y-2">
+        <div class="flex justify-between text-xs font-semibold">
+          <span class="text-emerald-400 flex items-center space-x-1.5">
+            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span>
+            <span id="probHomeName">Home Win</span>
+            <span id="probHomeVal" class="font-mono font-bold">55.8%</span>
+          </span>
+          <span class="text-amber-400 flex items-center space-x-1.5">
+            <span class="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span>
+            <span>Draw</span>
+            <span id="probDrawVal" class="font-mono font-bold">24.9%</span>
+          </span>
+          <span class="text-rose-400 flex items-center space-x-1.5">
+            <span class="w-2.5 h-2.5 rounded-full bg-rose-500 inline-block"></span>
+            <span id="probAwayName">Away Win</span>
+            <span id="probAwayVal" class="font-mono font-bold">19.3%</span>
+          </span>
+        </div>
+
+        <div class="h-4 rounded-full bg-slate-950 overflow-hidden flex p-0.5 border border-slate-800">
+          <div id="barHome" class="h-full bg-emerald-500 rounded-l-full transition-all duration-700 ease-out" style="width: 55.8%;"></div>
+          <div id="barDraw" class="h-full bg-amber-500 transition-all duration-700 ease-out" style="width: 24.9%;"></div>
+          <div id="barAway" class="h-full bg-rose-500 rounded-r-full transition-all duration-700 ease-out" style="width: 19.3%;"></div>
+        </div>
+      </div>
+
+      <!-- Detail Cards 3-Way Grid -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+        <div class="bg-slate-950/70 border border-emerald-500/20 rounded-xl p-4 text-center space-y-1">
+          <div class="text-xs text-slate-400">Home Win (2)</div>
+          <div id="cardHomeProb" class="text-2xl font-extrabold text-emerald-400 font-mono">55.8%</div>
+          <div id="cardHomeTeam" class="text-xs text-slate-300 font-medium truncate">Liverpool</div>
+        </div>
+
+        <div class="bg-slate-950/70 border border-amber-500/20 rounded-xl p-4 text-center space-y-1">
+          <div class="text-xs text-slate-400">Draw (1)</div>
+          <div id="cardDrawProb" class="text-2xl font-extrabold text-amber-400 font-mono">24.9%</div>
+          <div class="text-xs text-slate-300 font-medium">Match Tied</div>
+        </div>
+
+        <div class="bg-slate-950/70 border border-rose-500/20 rounded-xl p-4 text-center space-y-1">
+          <div class="text-xs text-slate-400">Away Win (0)</div>
+          <div id="cardAwayProb" class="text-2xl font-extrabold text-rose-400 font-mono">19.3%</div>
+          <div id="cardAwayTeam" class="text-xs text-slate-300 font-medium truncate">Man United</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Academic & Project Info Section -->
+    <div id="about" class="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-6 space-y-4">
+      <h3 class="text-base font-bold text-white flex items-center space-x-2">
+        <span>🎓 Data Science & Machine Learning Methodology</span>
+      </h3>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-slate-400">
+        <div class="bg-slate-950/50 p-4 rounded-xl border border-slate-800/60 space-y-1">
+          <div class="font-semibold text-slate-200">1. Real Historical Dataset</div>
+          <p>Trained on 5,524 matches from England Premier League, Spain La Liga, Italy Serie A, Germany Bundesliga, and France Ligue 1 with zero synthetic rows.</p>
+        </div>
+        <div class="bg-slate-950/50 p-4 rounded-xl border border-slate-800/60 space-y-1">
+          <div class="font-semibold text-slate-200">2. Zero Future Leakage</div>
+          <p>Rolling xG averages use strict <code class="text-emerald-400 font-mono">.shift(1)</code> lag. Pre-match predictions only utilize stats that existed prior to kickoff.</p>
+        </div>
+        <div class="bg-slate-950/50 p-4 rounded-xl border border-slate-800/60 space-y-1">
+          <div class="font-semibold text-slate-200">3. Validated Accuracy</div>
+          <p>Achieves <strong>51% - 52%</strong> 3-way multi-class accuracy, substantially exceeding random guessing baseline (33.3%).</p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-slate-800 py-6 text-center text-xs text-slate-500">
+    <p>Football Prediction Project • Powered by Extreme Gradient Boosting & Vercel</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

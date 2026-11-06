@@ -10,6 +10,7 @@ from pathlib import Path
 import pandas as pd
 
 from . import backtest, db, demo, features, labels, linking, model, price_pool_rules, report
+from .cli_1x2 import cmd_run_1x2
 from .config import load_config
 from .providers import five_dollar
 from .providers.api_football import ApiFootballProvider
@@ -1004,6 +1005,16 @@ def build_parser() -> argparse.ArgumentParser:
     verify = sub.add_parser("verify-model", help="check a saved model against its hash sidecar")
     verify.add_argument("--model", required=True)
     verify.set_defaults(func=cmd_verify_model)
+
+    run_1x2_p = sub.add_parser(
+        "run-1x2",
+        help="run academic Data Science 1X2 match outcome prediction experiment",
+    )
+    run_1x2_p.add_argument("--csv", default=None, help="load matches from custom CSV")
+    run_1x2_p.add_argument("--rolling-window", type=int, default=5, help="rolling match window (default: 5)")
+    run_1x2_p.add_argument("--train-ratio", type=float, default=0.8, help="train split ratio (default: 0.8)")
+    run_1x2_p.add_argument("--no-odds", action="store_true", help="exclude market odds features (use match stats only)")
+    run_1x2_p.set_defaults(func=cmd_run_1x2)
 
     return parser
 
