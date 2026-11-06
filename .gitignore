@@ -49,3 +49,6 @@ dist/
 .claude/
 build_notebook.py
 *.md
+
+run.ps1
+run_auto_retrain.bat
