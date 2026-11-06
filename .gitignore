@@ -48,3 +48,4 @@ dist/
 
 .claude/
 build_notebook.py
+*.md
