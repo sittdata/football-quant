@@ -47,3 +47,4 @@ dist/
 .impeccable/
 
 .claude/
+build_notebook.py
