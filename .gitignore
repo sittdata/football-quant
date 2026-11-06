@@ -25,6 +25,8 @@ logs/
 DSA.pdf
 screen.png
 *.png
+*.ipynb
+.ipynb_checkpoints/
 
 # scraped / unpacked artifacts (may contain session ids and tokens)
 site_dump.html
